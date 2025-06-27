@@ -59,7 +59,7 @@ class _ComercialPageState extends State<ComercialPage> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF4F8FFF),
-        title: Text('Comercialvvvvvv: ${user?.email ?? ''}'),
+        title: Text('Comercial: ${user?.email ?? ''}'),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -131,7 +131,7 @@ class _ComercialPageState extends State<ComercialPage> {
                             ? null
                             : () => _tomarFotoYSubir('Copia para el cliente'),
                         icon: const Icon(Icons.camera_alt_outlined),
-                        label: const Text('Copia para el cliente'),
+                        label: const Text('Copia para el clienteeee'),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.green,
                           shape: RoundedRectangleBorder(
