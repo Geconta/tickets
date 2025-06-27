@@ -90,3 +90,13 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+hosting:
+  public: build/web
+  ignore:
+    - firebase.json
+    - '**/.*'
+    - '**/node_modules/**'
+  rewrites:
+    - source: '**'
+      destination: /index.html
