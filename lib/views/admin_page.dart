@@ -10,7 +10,7 @@ class AdminPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF4F8FFF),
-        title: const Text('Panel de Administrador'),
+        title: const Text('Panel de Administradorqqqqqqqqqqqqqqqq'),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
