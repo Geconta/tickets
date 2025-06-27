@@ -18,7 +18,7 @@ class _ComercialPageState extends State<ComercialPage> {
     'Manutención',
     'Alojamiento',
     'Varios',
-    'Gastos de representación'
+    'Gastos de representación',
   ];
   bool isLoading = false;
 
@@ -26,11 +26,15 @@ class _ComercialPageState extends State<ComercialPage> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || tipoTicket == null) return;
     final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
+    final picked = await picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 70,
+    );
     if (picked == null) return;
 
     setState(() => isLoading = true);
-    final fileName = '${user.uid}_${DateTime.now().millisecondsSinceEpoch}_$tipoDoc.jpg';
+    final fileName =
+        '${user.uid}_${DateTime.now().millisecondsSinceEpoch}_$tipoDoc.jpg';
     final ref = FirebaseStorage.instance.ref().child('tickets/$fileName');
     await ref.putData(await picked.readAsBytes());
     final url = await ref.getDownloadURL();
@@ -44,9 +48,9 @@ class _ComercialPageState extends State<ComercialPage> {
     });
 
     setState(() => isLoading = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Foto subida como $tipoDoc')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Foto subida como $tipoDoc')));
   }
 
   @override
@@ -55,7 +59,7 @@ class _ComercialPageState extends State<ComercialPage> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF4F8FFF),
-        title: Text('Comercial: ${user?.email ?? ''}'),
+        title: Text('Comercialvvvvvv: ${user?.email ?? ''}'),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -137,14 +141,18 @@ class _ComercialPageState extends State<ComercialPage> {
                       ),
                     ],
                   ),
-                  if (isLoading) const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: CircularProgressIndicator(),
-                  ),
+                  if (isLoading)
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: CircularProgressIndicator(),
+                    ),
                   const SizedBox(height: 32),
                   const Divider(),
                   const SizedBox(height: 8),
-                  const Text('Tus tickets subidos:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Text(
+                    'Tus tickets subidos:',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   SizedBox(
                     height: 300,
                     child: StreamBuilder(
@@ -154,7 +162,8 @@ class _ComercialPageState extends State<ComercialPage> {
                           .orderBy('fechaHora', descending: true)
                           .snapshots(),
                       builder: (context, snapshot) {
-                        if (!snapshot.hasData) return const CircularProgressIndicator();
+                        if (!snapshot.hasData)
+                          return const CircularProgressIndicator();
                         final tickets = snapshot.data!.docs;
                         if (tickets.isEmpty) {
                           return const Center(child: Text('Sin historial.'));
@@ -164,10 +173,22 @@ class _ComercialPageState extends State<ComercialPage> {
                             final data = doc.data();
                             return ListTile(
                               leading: data['fotoUrl'] != null
-                                  ? Image.network(data['fotoUrl'], width: 48, height: 48, fit: BoxFit.cover)
-                                  : const Icon(Icons.receipt_long, color: Colors.indigo),
-                              title: Text('${data['tipoDoc']} - ${data['tipo']}'),
-                              subtitle: Text(data['fechaHora'].toDate().toString()),
+                                  ? Image.network(
+                                      data['fotoUrl'],
+                                      width: 48,
+                                      height: 48,
+                                      fit: BoxFit.cover,
+                                    )
+                                  : const Icon(
+                                      Icons.receipt_long,
+                                      color: Colors.indigo,
+                                    ),
+                              title: Text(
+                                '${data['tipoDoc']} - ${data['tipo']}',
+                              ),
+                              subtitle: Text(
+                                data['fechaHora'].toDate().toString(),
+                              ),
                             );
                           }).toList(),
                         );
