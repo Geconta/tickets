@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:cloud_firestore/cloud_firestore.dart' as firestore;
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:geolocator/geolocator.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 class ComercialPage extends StatefulWidget {
   const ComercialPage({super.key});
@@ -12,71 +12,46 @@ class ComercialPage extends StatefulWidget {
 }
 
 class _ComercialPageState extends State<ComercialPage> {
-  String? scannedData;
-  late MobileScannerController cameraController;
-  bool isTorchOn = false;
-  bool showScanner = false; // <-- Nuevo estado
+  String? tipoTicket;
+  final tipos = [
+    'Transporte',
+    'Manutención',
+    'Alojamiento',
+    'Varios',
+    'Gastos de representación'
+  ];
+  bool isLoading = false;
 
-  @override
-  void initState() {
-    super.initState();
-    cameraController = MobileScannerController();
-  }
+  Future<void> _tomarFotoYSubir(String tipoDoc) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || tipoTicket == null) return;
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
+    if (picked == null) return;
 
-  Future<Position> _obtenerUbicacion() async {
-    bool servicioHabilitado = await Geolocator.isLocationServiceEnabled();
-    if (!servicioHabilitado) throw Exception('GPS desactivado');
-    LocationPermission permiso = await Geolocator.checkPermission();
-    if (permiso == LocationPermission.denied) {
-      permiso = await Geolocator.requestPermission();
-      if (permiso == LocationPermission.denied) {
-        throw Exception('Permiso denegado');
-      }
-    }
-    if (permiso == LocationPermission.deniedForever) {
-      throw Exception('Permiso denegado permanentemente');
-    }
-    return await Geolocator.getCurrentPosition();
-  }
+    setState(() => isLoading = true);
+    final fileName = '${user.uid}_${DateTime.now().millisecondsSinceEpoch}_$tipoDoc.jpg';
+    final ref = FirebaseStorage.instance.ref().child('tickets/$fileName');
+    await ref.putData(await picked.readAsBytes());
+    final url = await ref.getDownloadURL();
 
-  Future<void> _guardarTicket(String codigoQR) async {
-    try {
-      final pos = await _obtenerUbicacion();
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) throw Exception("Usuario no autenticado");
+    await FirebaseFirestore.instance.collection('tickets').add({
+      'comercialId': user.uid,
+      'tipo': tipoTicket,
+      'tipoDoc': tipoDoc,
+      'fotoUrl': url,
+      'fechaHora': DateTime.now(),
+    });
 
-      await firestore.FirebaseFirestore.instance.collection('tickets').add({
-        'comercialId': user.uid,
-        'contenido': codigoQR,
-        'fechaHora': DateTime.now(),
-        'geolocalizacion': firestore.GeoPoint(pos.latitude, pos.longitude),
-        'estado': 'Entregado',
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('✅ Ticket guardado')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('❌ Error: ${e.toString()}')));
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    cameraController.dispose();
-    super.dispose();
+    setState(() => isLoading = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Foto subida como $tipoDoc')),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
-
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF4F8FFF),
@@ -92,16 +67,6 @@ class _ComercialPageState extends State<ComercialPage> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          setState(() {
-            showScanner = true;
-          });
-        },
-        icon: const Icon(Icons.qr_code_scanner),
-        label: const Text('Agregar nuevo ticket'),
-        backgroundColor: const Color(0xFF4F8FFF),
-      ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -110,62 +75,61 @@ class _ComercialPageState extends State<ComercialPage> {
             end: Alignment.bottomRight,
           ),
         ),
-        child: showScanner
-            ? Center(
-                child: Container(
-                  margin: const EdgeInsets.all(24),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.95),
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.08),
-                        blurRadius: 24,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
+        child: Center(
+          child: SingleChildScrollView(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.95),
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.08),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: tipoTicket,
+                    items: tipos
+                        .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                        .toList(),
+                    onChanged: (v) => setState(() => tipoTicket = v),
+                    decoration: const InputDecoration(
+                      labelText: 'Tipo de ticket',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      const Text(
-                        'Escanea el ticket',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blueGrey,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      SizedBox(
-                        width: 300,
-                        height: 300,
-                        child: MobileScanner(
-                          controller: cameraController,
-                          onDetect: (capture) {
-                            final code = capture.barcodes.first.rawValue;
-                            if (code != null && code != scannedData) {
-                              setState(() {
-                                scannedData = code;
-                                showScanner = false; // Oculta el escáner
-                              });
-                              _guardarTicket(code);
-                            }
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 16),
                       ElevatedButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            showScanner = false;
-                          });
-                        },
-                        icon: const Icon(Icons.close),
-                        label: const Text('Cancelar'),
+                        onPressed: tipoTicket == null || isLoading
+                            ? null
+                            : () => _tomarFotoYSubir('Factura simplificada'),
+                        icon: const Icon(Icons.camera_alt),
+                        label: const Text('Factura simplificada'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.redAccent,
+                          backgroundColor: Colors.blue,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: tipoTicket == null || isLoading
+                            ? null
+                            : () => _tomarFotoYSubir('Copia para el cliente'),
+                        icon: const Icon(Icons.camera_alt_outlined),
+                        label: const Text('Copia para el cliente'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
@@ -173,38 +137,18 @@ class _ComercialPageState extends State<ComercialPage> {
                       ),
                     ],
                   ),
-                ),
-              )
-            : Column(
-                children: [
-                  Container(
-                    width: double.infinity,
-                    margin: const EdgeInsets.all(16),
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.95),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.08),
-                          blurRadius: 16,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.person, color: Colors.indigo[700]),
-                        const SizedBox(width: 8),
-                        const Text('Rol: Comercial',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                      ],
-                    ),
+                  if (isLoading) const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: CircularProgressIndicator(),
                   ),
-                  Expanded(
-                    flex: 3,
+                  const SizedBox(height: 32),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  const Text('Tus tickets subidos:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  SizedBox(
+                    height: 300,
                     child: StreamBuilder(
-                      stream: firestore.FirebaseFirestore.instance
+                      stream: FirebaseFirestore.instance
                           .collection('tickets')
                           .where('comercialId', isEqualTo: user?.uid)
                           .orderBy('fechaHora', descending: true)
@@ -219,8 +163,10 @@ class _ComercialPageState extends State<ComercialPage> {
                           children: tickets.map((doc) {
                             final data = doc.data();
                             return ListTile(
-                              leading: const Icon(Icons.history, color: Colors.indigo),
-                              title: Text(data['contenido']),
+                              leading: data['fotoUrl'] != null
+                                  ? Image.network(data['fotoUrl'], width: 48, height: 48, fit: BoxFit.cover)
+                                  : const Icon(Icons.receipt_long, color: Colors.indigo),
+                              title: Text('${data['tipoDoc']} - ${data['tipo']}'),
                               subtitle: Text(data['fechaHora'].toDate().toString()),
                             );
                           }).toList(),
@@ -230,6 +176,9 @@ class _ComercialPageState extends State<ComercialPage> {
                   ),
                 ],
               ),
+            ),
+          ),
+        ),
       ),
     );
   }
