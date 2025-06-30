@@ -16,33 +16,24 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _login() async {
     setState(() => isLoading = true);
     try {
-      final email = emailController.text.trim();
-      final password = passwordController.text.trim();
-
-      // Admin login
-      if (email == 'admin@geconta.net' && password == 'admin123') {
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: email,
-          password: password,
-        );
-        if (mounted) {
-          Navigator.pushReplacementNamed(context, '/admin');
-        }
-        return;
-      }
-
-      // Comercial login
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: email,
-        password: password,
+      final userCredential =
+          await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: emailController.text.trim(),
+        password: passwordController.text.trim(),
       );
-      if (mounted) {
+      final email = userCredential.user?.email ?? '';
+      if (!mounted) return;
+      if (email.toLowerCase() == 'admin@geconta.net') {
+        Navigator.pushReplacementNamed(context, '/admin');
+      } else {
         Navigator.pushReplacementNamed(context, '/comercial');
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Error: ${e.toString()}')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
@@ -51,116 +42,78 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF4F8FFF), Color(0xFF235390)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: Center(
-          child: SingleChildScrollView(
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 24),
-              padding: const EdgeInsets.all(32),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.95),
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.08),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
+      backgroundColor: const Color(0xFFF5F6FA), // Gris muy claro
+      body: Center(
+        child: SingleChildScrollView(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.10),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.lock_outline, size: 64, color: Colors.grey),
+                const SizedBox(height: 24),
+                const Text(
+                  'Iniciar sesión',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
                   ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircleAvatar(
-                    radius: 40,
-                    backgroundColor: Colors.blue[100],
-                    child: Icon(Icons.login, size: 48, color: Colors.blue[700]),
+                ),
+                const SizedBox(height: 24),
+                TextField(
+                  controller: emailController,
+                  decoration: const InputDecoration(
+                    labelText: 'Correo electrónico',
+                    border: OutlineInputBorder(),
                   ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Iniciar Sesión',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.blueGrey[900],
-                      letterSpacing: 1.2,
-                    ),
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: passwordController,
+                  decoration: const InputDecoration(
+                    labelText: 'Contraseña',
+                    border: OutlineInputBorder(),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Accede con tu cuenta',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.blueGrey[600],
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  TextField(
-                    controller: emailController,
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.email_outlined),
-                      labelText: 'Correo electrónico',
-                      filled: true,
-                      fillColor: Colors.blueGrey[50],
-                      border: OutlineInputBorder(
+                  obscureText: true,
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: isLoading ? null : _login,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blueGrey,
+                      shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
-                        borderSide: BorderSide.none,
                       ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
                     ),
-                    keyboardType: TextInputType.emailAddress,
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: passwordController,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      labelText: 'Contraseña',
-                      filled: true,
-                      fillColor: Colors.blueGrey[50],
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  isLoading
-                      ? const CircularProgressIndicator()
-                      : SizedBox(
-                          width: double.infinity,
-                          height: 48,
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF4F8FFF),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              elevation: 4,
-                              shadowColor: Colors.blueAccent.withOpacity(0.2),
-                            ),
-                            onPressed: _login,
-                            child: const Text(
-                              'Iniciar sesión',
-                              style: TextStyle(fontSize: 18, color: Colors.white),
-                            ),
+                    child: isLoading
+                        ? const CircularProgressIndicator(
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          )
+                        : const Text(
+                            'Entrar',
+                            style: TextStyle(fontSize: 18, color: Colors.white),
                           ),
-                        ),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pushNamed(context, '/register');
-                    },
-                    child: const Text('¿No tienes cuenta? Regístrate'),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
