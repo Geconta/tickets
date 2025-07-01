@@ -27,7 +27,7 @@ class _AdminPageState extends State<AdminPage> {
   bool isLoading = false;
   bool hasMore = true;
   List<QueryDocumentSnapshot<Map<String, dynamic>>> tickets = [];
-  List<String> comerciales = [];
+  Map<String, String> comercialesMap = {};
   final tipos = [
     'Transporte',
     'Manutención',
@@ -44,15 +44,19 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   Future<void> _loadComerciales() async {
-    // Obtiene todos los comerciales únicos de los tickets
-    final snapshot =
-        await FirebaseFirestore.instance.collection('tickets').get();
-    final ids =
-        snapshot.docs.map((d) => d['comercialId'] as String).toSet().toList();
+    final snapshot = await FirebaseFirestore.instance.collection('users').get();
+    final comercialesList = snapshot.docs;
+    final Map<String, String> comercialNames = {};
+
+    for (var doc in comercialesList) {
+      final data = doc.data();
+      comercialNames[doc.id] = '${data['name']} ${data['lastName']}';
+    }
+
     setState(() {
-      comerciales = ids;
+      comercialesMap = comercialNames;
     });
-  }
+  } // Obtener datos del usuario desde Firestore
 
   Future<void> _loadTickets({bool reset = false}) async {
     if (isLoading) return;
@@ -196,26 +200,35 @@ class _AdminPageState extends State<AdminPage> {
 
   // Exportar todos los tickets filtrados a Excel
   Future<void> _exportarExcelTodos() async {
-    final excel = Excel.createExcel();
-    final sheet = excel['Tickets'];
-    sheet.appendRow(['Tipo', 'Tipo Doc', 'Comercial', 'Fecha', 'Foto URL']);
-    for (final doc in tickets) {
-      final data = doc.data();
-      sheet.appendRow([
-        data['tipo'] ?? '',
-        data['tipoDoc'] ?? '',
-        data['comercialId'] ?? '',
-        DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate()),
-        data['fotoUrl'] ?? '',
-      ]);
-    }
-    final bytes = excel.encode();
-    final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/tickets.xlsx');
-    await file.writeAsBytes(bytes!);
+    try {
+      final excel = Excel.createExcel();
+      final sheet = excel['Tickets'];
+      sheet.appendRow(['Tipo', 'Tipo Doc', 'Comercial', 'Fecha', 'Foto URL']);
+      for (final doc in tickets) {
+        final data = doc.data();
+        sheet.appendRow([
+          data['tipo'] ?? '',
+          data['tipoDoc'] ?? '',
+          data['comercialId'] ?? '',
+          DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate()),
+          data['fotoUrl'] ?? '',
+        ]);
+      }
+      final bytes = excel.encode();
+      if (bytes == null) {
+        print('Error: No se pudo generar el archivo Excel');
+        return;
+      }
+      final dir = await getTemporaryDirectory();
+      print('Directorio temporal: ${dir.path}');
+      final file = File('${dir.path}/tickets.xlsx');
+      await file.writeAsBytes(bytes);
+      print('Archivo guardado en: ${file.path}');
 
-    // Usa share_plus para compartir el archivo Excel
-    await Share.shareXFiles([XFile(file.path)], text: 'Tickets exportados');
+      await Share.shareXFiles([XFile(file.path)], text: 'Tickets exportados');
+    } catch (e) {
+      print('Error exportando Excel: $e');
+    }
   }
 
   @override
@@ -291,10 +304,11 @@ class _AdminPageState extends State<AdminPage> {
                           value: null,
                           child: Text('Todos los comerciales'),
                         ),
-                        ...comerciales.map((id) => DropdownMenuItem(
-                              value: id,
-                              child: Text(id),
-                            )),
+                        ...comercialesMap.entries
+                            .map((entry) => DropdownMenuItem(
+                                  value: entry.key,
+                                  child: Text(entry.value),
+                                )),
                       ],
                       onChanged: _onFiltroComercialChanged,
                       decoration: const InputDecoration(
@@ -382,13 +396,16 @@ class _AdminPageState extends State<AdminPage> {
                                 );
                               }
                               final data = tickets[index].data();
+                              final comercialName =
+                                  comercialesMap[data['comercialId']] ??
+                                      'Desconocido';
                               return ListTile(
                                 leading: const Icon(Icons.receipt_long,
                                     color: Colors.indigo, size: 40),
                                 title: Text(
                                     '${data['tipoDoc']} - ${data['tipo']}'),
                                 subtitle: Text(
-                                  'Comercial: ${data['comercialId']}\n'
+                                  'Comercial: $comercialName\n'
                                   'Fecha: ${DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate())}',
                                 ),
                                 trailing: Row(

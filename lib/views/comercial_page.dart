@@ -29,6 +29,36 @@ class _ComercialPageState extends State<ComercialPage> {
     'Gastos de representación',
   ];
 
+  Future<void> _eliminarTicket(String ticketId, String? fotoUrl) async {
+    try {
+      // Eliminar el documento de Firestore
+      await FirebaseFirestore.instance
+          .collection('tickets')
+          .doc(ticketId)
+          .delete();
+
+      // Si hay una foto, eliminarla de Supabase
+      if (fotoUrl != null) {
+        final supabase = Supabase.instance.client;
+        final fileName =
+            fotoUrl.split('/').last; // Extraer el nombre del archivo
+        await supabase.storage.from('ticketsfotos').remove([fileName]);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Ticket eliminado correctamente')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al eliminar el ticket: $e')),
+        );
+      }
+    }
+  }
+
   Future<String?> subirImagenASupabase(XFile picked, String userId) async {
     final supabase = Supabase.instance.client;
     final fileName = '${userId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
@@ -89,7 +119,6 @@ class _ComercialPageState extends State<ComercialPage> {
     }
   }
 
-  // Cambia el filtro de fecha para poder limpiar el filtro
   void _selectDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -108,7 +137,6 @@ class _ComercialPageState extends State<ComercialPage> {
     });
   }
 
-  // Exportar solo un ticket
   Future<void> _exportarPDFTicket(Map<String, dynamic> data) async {
     final pdf = pw.Document();
     final formatter = DateFormat('yyyy-MM-dd HH:mm');
@@ -205,291 +233,373 @@ class _ComercialPageState extends State<ComercialPage> {
     await Printing.layoutPdf(onLayout: (format) async => pdf.save());
   }
 
+  Future<Map<String, String>> _getUserInfo() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return {'name': 'Sin nombre', 'lastName': ''};
+
+    // Obtener datos del usuario desde Firestore
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+    if (doc.exists) {
+      final data = doc.data();
+      return {
+        'name': data?['name'] ?? 'Sin nombre',
+        'lastName': data?['lastName'] ?? '',
+      };
+    }
+
+    return {'name': 'Sin nombre', 'lastName': ''};
+  }
+
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F6FA),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 1,
-        title: Text(
-          'Comercial: ${user?.email ?? ''}',
-          style: const TextStyle(color: Colors.black87),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.black54),
-            tooltip: 'Cerrar sesión',
-            onPressed: () async {
-              await FirebaseAuth.instance.signOut();
-              if (mounted) Navigator.pushReplacementNamed(context, '/');
-            },
-          ),
-        ],
-        iconTheme: const IconThemeData(color: Colors.black54),
-      ),
-      body: Center(
-        child: SingleChildScrollView(
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 24),
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withOpacity(0.10),
-                  blurRadius: 18,
-                  offset: const Offset(0, 6),
-                ),
-              ],
+    return FutureBuilder<Map<String, String>>(
+      future: _getUserInfo(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final name = snapshot.data!['name']!;
+        final lastName = snapshot.data!['lastName']!;
+
+        return Scaffold(
+          backgroundColor: const Color(0xFFF5F6FA),
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            elevation: 1,
+            title: Text(
+              'Comercial: ${name.isNotEmpty ? '$name $lastName' : 'Sin nombre'}',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Formulario de subida
-                Text(
-                  'Nuevo ticket',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  value: tipoTicket,
-                  items: tipos
-                      .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                      .toList(),
-                  onChanged: (v) => setState(() => tipoTicket = v),
-                  decoration: const InputDecoration(
-                    labelText: 'Tipo de ticket',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: tipoTicket == null || isLoading
-                            ? null
-                            : () => _tomarFotoYSubir('Factura simplificada'),
-                        icon: const Icon(Icons.camera_alt),
-                        label: const Text('Factura simplificada'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: tipoTicket == null || isLoading
-                            ? null
-                            : () => _tomarFotoYSubir('Copia para el cliente'),
-                        icon: const Icon(Icons.camera_alt_outlined),
-                        label: const Text('Copia cliente'),
-                      ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.logout, color: Colors.black54),
+                tooltip: 'Cerrar sesión',
+                onPressed: () async {
+                  await FirebaseAuth.instance.signOut();
+                  if (mounted) Navigator.pushReplacementNamed(context, '/');
+                },
+              ),
+            ],
+            iconTheme: const IconThemeData(color: Colors.black54),
+          ),
+          body: Center(
+            child: SingleChildScrollView(
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 24),
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.grey.withOpacity(0.10),
+                      blurRadius: 18,
+                      offset: const Offset(0, 6),
                     ),
                   ],
                 ),
-                if (isLoading)
-                  const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
-                const Divider(height: 32),
-
-                // Filtros
-                Text(
-                  'Filtros',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Filtro por tipo
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        value: filtroTipoTicket,
-                        items: [
-                          const DropdownMenuItem(
-                            value: null,
-                            child: Text('Todos los tipos'),
+                    // Formulario de subida
+                    Text(
+                      'Nuevo ticket',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<String>(
+                      value: tipoTicket,
+                      items: tipos
+                          .map(
+                              (t) => DropdownMenuItem(value: t, child: Text(t)))
+                          .toList(),
+                      onChanged: (v) => setState(() => tipoTicket = v),
+                      decoration: const InputDecoration(
+                        labelText: 'Tipo de ticket',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: tipoTicket == null || isLoading
+                                ? null
+                                : () =>
+                                    _tomarFotoYSubir('Factura simplificada'),
+                            icon: const Icon(Icons.camera_alt),
+                            label: const Text('Factura simplificada'),
                           ),
-                          ...tipos.map((t) => DropdownMenuItem(
-                                value: t,
-                                child: Text(t),
-                              )),
-                        ],
-                        onChanged: (v) => setState(() => filtroTipoTicket = v),
-                        decoration: const InputDecoration(
-                          labelText: 'Tipo',
-                          border: OutlineInputBorder(),
                         ),
-                      ),
-                    ),
-                    if (filtroTipoTicket != null)
-                      IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () =>
-                            setState(() => filtroTipoTicket = null),
-                        tooltip: 'Quitar filtro',
-                      ),
-                    const SizedBox(width: 10),
-                    // Filtro por fecha
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: _selectDate,
-                        icon: const Icon(Icons.calendar_today),
-                        label: Text(selectedDate == null
-                            ? 'Filtrar por fecha'
-                            : DateFormat('yyyy-MM-dd').format(selectedDate!)),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 18, horizontal: 12),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: tipoTicket == null || isLoading
+                                ? null
+                                : () =>
+                                    _tomarFotoYSubir('Copia para el cliente'),
+                            icon: const Icon(Icons.camera_alt_outlined),
+                            label: const Text('Copia cliente'),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                    if (selectedDate != null)
-                      IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: _clearDateFilter,
-                        tooltip: 'Limpiar fecha',
+                    if (isLoading)
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Center(child: CircularProgressIndicator()),
                       ),
-                  ],
-                ),
-                const SizedBox(height: 16),
+                    const Divider(height: 32),
 
-                // Listado de tickets
-                Text(
-                  'Tus tickets subidos:',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  height: 400,
-                  child: StreamBuilder(
-                    stream: FirebaseFirestore.instance
-                        .collection('tickets')
-                        .where('comercialId', isEqualTo: user?.uid)
-                        .orderBy('fechaHora', descending: true)
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
-
-                      var tickets = snapshot.data!.docs;
-
-                      // Filtro por tipo
-                      if (filtroTipoTicket != null &&
-                          filtroTipoTicket!.isNotEmpty) {
-                        tickets = tickets
-                            .where((d) => d['tipo'] == filtroTipoTicket)
-                            .toList();
-                      }
-
-                      // Filtro por fecha
-                      if (selectedDate != null) {
-                        tickets = tickets.where((d) {
-                          final fecha = d['fechaHora'].toDate();
-                          return fecha.year == selectedDate!.year &&
-                              fecha.month == selectedDate!.month &&
-                              fecha.day == selectedDate!.day;
-                        }).toList();
-                      }
-
-                      if (tickets.isEmpty) {
-                        return const Center(child: Text('Sin historial.'));
-                      }
-
-                      return Column(
-                        children: [
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton.icon(
-                              onPressed: tickets.isNotEmpty
-                                  ? () => _exportarPDF(tickets)
-                                  : null,
-                              icon: const Icon(Icons.picture_as_pdf),
-                              label: const Text('Exportar todo'),
+                    // Filtros
+                    Text(
+                      'Filtros',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        // Filtro por tipo
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            value: filtroTipoTicket,
+                            items: [
+                              const DropdownMenuItem(
+                                value: null,
+                                child: Text('Todos los tipos'),
+                              ),
+                              ...tipos.map((t) => DropdownMenuItem(
+                                    value: t,
+                                    child: Text(t),
+                                  )),
+                            ],
+                            onChanged: (v) =>
+                                setState(() => filtroTipoTicket = v),
+                            decoration: const InputDecoration(
+                              labelText: 'Tipo',
+                              border: OutlineInputBorder(),
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          Expanded(
-                            child: ListView.separated(
-                              itemCount: tickets.length,
-                              separatorBuilder: (_, __) =>
-                                  const SizedBox(height: 10),
-                              itemBuilder: (context, index) {
-                                final data = tickets[index].data();
-                                return Card(
-                                  elevation: 2,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: ListTile(
-                                    leading: data['fotoUrl'] != null
-                                        ? ClipRRect(
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                            child: Image.network(
-                                              data['fotoUrl'],
-                                              width: 56,
-                                              height: 56,
-                                              fit: BoxFit.cover,
-                                            ),
-                                          )
-                                        : const Icon(Icons.receipt_long,
-                                            color: Colors.indigo, size: 40),
-                                    title: Text(
-                                      '${data['tipoDoc']} - ${data['tipo']}',
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.bold),
-                                    ),
-                                    subtitle: Text(
-                                        DateFormat('yyyy-MM-dd HH:mm').format(
-                                            data['fechaHora'].toDate())),
-                                    trailing: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        IconButton(
-                                          icon:
-                                              const Icon(Icons.picture_as_pdf),
-                                          tooltip: 'Exportar solo este ticket',
-                                          onPressed: () =>
-                                              _exportarPDFTicket(data),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(Icons.visibility),
-                                          onPressed: () {
-                                            showDialog(
-                                              context: context,
-                                              builder: (_) => Dialog(
-                                                child: InteractiveViewer(
-                                                  child: Image.network(
-                                                    data['fotoUrl'],
-                                                    fit: BoxFit.contain,
-                                                  ),
+                        ),
+                        if (filtroTipoTicket != null)
+                          IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () =>
+                                setState(() => filtroTipoTicket = null),
+                            tooltip: 'Quitar filtro',
+                          ),
+                        const SizedBox(width: 10),
+                        // Filtro por fecha
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _selectDate,
+                            icon: const Icon(Icons.calendar_today),
+                            label: Text(selectedDate == null
+                                ? 'Filtrar por fecha'
+                                : DateFormat('yyyy-MM-dd')
+                                    .format(selectedDate!)),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 18, horizontal: 12),
+                            ),
+                          ),
+                        ),
+                        if (selectedDate != null)
+                          IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: _clearDateFilter,
+                            tooltip: 'Limpiar fecha',
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    // Listado de tickets
+                    Text(
+                      'Tus tickets subidos:',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      height: 400,
+                      child: StreamBuilder(
+                        stream: FirebaseFirestore.instance
+                            .collection('tickets')
+                            .where('comercialId',
+                                isEqualTo:
+                                    FirebaseAuth.instance.currentUser?.uid)
+                            .orderBy('fechaHora', descending: true)
+                            .snapshots(),
+                        builder: (context, snapshot) {
+                          if (!snapshot.hasData) {
+                            return const Center(
+                                child: CircularProgressIndicator());
+                          }
+
+                          var tickets = snapshot.data!.docs;
+
+                          // Filtro por tipo
+                          if (filtroTipoTicket != null &&
+                              filtroTipoTicket!.isNotEmpty) {
+                            tickets = tickets
+                                .where((d) => d['tipo'] == filtroTipoTicket)
+                                .toList();
+                          }
+
+                          // Filtro por fecha
+                          if (selectedDate != null) {
+                            tickets = tickets.where((d) {
+                              final fecha = d['fechaHora'].toDate();
+                              return fecha.year == selectedDate!.year &&
+                                  fecha.month == selectedDate!.month &&
+                                  fecha.day == selectedDate!.day;
+                            }).toList();
+                          }
+
+                          if (tickets.isEmpty) {
+                            return const Center(child: Text('Sin historial.'));
+                          }
+
+                          return Column(
+                            children: [
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: TextButton.icon(
+                                  onPressed: tickets.isNotEmpty
+                                      ? () => _exportarPDF(tickets)
+                                      : null,
+                                  icon: const Icon(Icons.picture_as_pdf),
+                                  label: const Text('Exportar todo'),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Expanded(
+                                child: ListView.separated(
+                                  itemCount: tickets.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(height: 10),
+                                  itemBuilder: (context, index) {
+                                    final data = tickets[index].data();
+                                    return Card(
+                                      elevation: 2,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: ListTile(
+                                        leading: data['fotoUrl'] != null
+                                            ? ClipRRect(
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                                child: Image.network(
+                                                  data['fotoUrl'],
+                                                  width: 56,
+                                                  height: 56,
+                                                  fit: BoxFit.cover,
                                                 ),
-                                              ),
-                                            );
-                                          },
+                                              )
+                                            : const Icon(Icons.receipt_long,
+                                                color: Colors.indigo, size: 40),
+                                        title: Text(
+                                          '${data['tipoDoc']} - ${data['tipo']}',
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold),
                                         ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
+                                        subtitle: Text(DateFormat(
+                                                'yyyy-MM-dd HH:mm')
+                                            .format(
+                                                data['fechaHora'].toDate())),
+                                        trailing: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            IconButton(
+                                              icon: const Icon(
+                                                  Icons.picture_as_pdf),
+                                              tooltip:
+                                                  'Exportar solo este ticket',
+                                              onPressed: () =>
+                                                  _exportarPDFTicket(data),
+                                            ),
+                                            IconButton(
+                                              icon:
+                                                  const Icon(Icons.visibility),
+                                              onPressed: () {
+                                                showDialog(
+                                                  context: context,
+                                                  builder: (_) => Dialog(
+                                                    child: InteractiveViewer(
+                                                      child: Image.network(
+                                                        data['fotoUrl'],
+                                                        fit: BoxFit.contain,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                            IconButton(
+                                              icon: const Icon(Icons.delete,
+                                                  color: Colors.red),
+                                              tooltip: 'Eliminar ticket',
+                                              onPressed: () {
+                                                final fotoUrl = data['fotoUrl'];
+                                                final ticketId = tickets[index]
+                                                    .id; // asegúrate de extraerlo del ticket
+                                                // Confirmación antes de eliminar
+                                                showDialog(
+                                                  context: context,
+                                                  builder: (_) => AlertDialog(
+                                                    title:
+                                                        const Text('Eliminar'),
+                                                    content: const Text(
+                                                        '¿Estás seguro de que deseas eliminar este ticket?'),
+                                                    actions: [
+                                                      TextButton(
+                                                        onPressed: () {
+                                                          Navigator.of(context)
+                                                              .pop();
+                                                        },
+                                                        child: const Text(
+                                                            'Cancelar'),
+                                                      ),
+                                                      TextButton(
+                                                        onPressed: () {
+                                                          Navigator.of(context)
+                                                              .pop();
+                                                          _eliminarTicket(
+                                                              ticketId,
+                                                              fotoUrl);
+                                                        },
+                                                        child: const Text(
+                                                            'Eliminar'),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

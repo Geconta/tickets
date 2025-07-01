@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -9,8 +10,11 @@ class RegisterPage extends StatefulWidget {
 }
 
 class _RegisterPageState extends State<RegisterPage> {
+  final nameController = TextEditingController();
+  final lastNameController = TextEditingController();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
+
   bool isLoading = false;
 
   Future<void> _register() async {
@@ -18,11 +22,26 @@ class _RegisterPageState extends State<RegisterPage> {
     try {
       final email = emailController.text.trim();
       final password = passwordController.text.trim();
+      final name = nameController.text.trim();
+      final lastName = lastNameController.text.trim();
 
-      await FirebaseAuth.instance.createUserWithEmailAndPassword(
+      final userCredential =
+          await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
+
+      // Guardar información adicional en Firestore
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userCredential.user!.uid)
+          .set({
+        'uid': userCredential.user!.uid,
+        'email': email,
+        'name': name,
+        'lastName': lastName,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
 
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/comercial');
@@ -84,6 +103,34 @@ class _RegisterPageState extends State<RegisterPage> {
                   style: TextStyle(fontSize: 16, color: Colors.black54),
                 ),
                 const SizedBox(height: 32),
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.person_outline),
+                    labelText: 'Nombre',
+                    filled: true,
+                    fillColor: Color(0xFFF5F6FA),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(16)),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: lastNameController,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.person_outline),
+                    labelText: 'Apellidos',
+                    filled: true,
+                    fillColor: Color(0xFFF5F6FA),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(16)),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
                 TextField(
                   controller: emailController,
                   decoration: const InputDecoration(
