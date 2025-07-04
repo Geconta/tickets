@@ -10,6 +10,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
+import 'dart:html' as html;
 
 class AdminPage extends StatefulWidget {
   const AdminPage({super.key});
@@ -20,6 +21,8 @@ class AdminPage extends StatefulWidget {
 
 class _AdminPageState extends State<AdminPage> {
   DateTime? selectedDate;
+  DateTime? selectedMonth;
+  int? selectedYear;
   String? filtroComercialId;
   String? filtroTipoTicket;
   static const int pageSize = 10;
@@ -73,11 +76,23 @@ class _AdminPageState extends State<AdminPage> {
       query = query
           .where('fechaHora', isGreaterThanOrEqualTo: start)
           .where('fechaHora', isLessThan: end);
+    } else if (selectedMonth != null) {
+      final start = DateTime(selectedMonth!.year, selectedMonth!.month, 1);
+      final end = DateTime(selectedMonth!.year, selectedMonth!.month + 1, 1);
+      query = query
+          .where('fechaHora', isGreaterThanOrEqualTo: start)
+          .where('fechaHora', isLessThan: end);
+    } else if (selectedYear != null) {
+      final start = DateTime(selectedYear!, 1, 1);
+      final end = DateTime(selectedYear! + 1, 1, 1);
+      query = query
+          .where('fechaHora', isGreaterThanOrEqualTo: start)
+          .where('fechaHora', isLessThan: end);
     }
     if (filtroComercialId != null && filtroComercialId!.isNotEmpty) {
       query = query.where('comercialId', isEqualTo: filtroComercialId);
     }
-    if (filtroTipoTicket != null && filtroTipoTicket!.isNotEmpty) {
+    if (filtroTipoTicket != null && filtroTipoTicket != '') {
       query = query.where('tipo', isEqualTo: filtroTipoTicket);
     }
 
@@ -201,31 +216,149 @@ class _AdminPageState extends State<AdminPage> {
   // Exportar todos los tickets filtrados a Excel
   Future<void> _exportarExcelTodos() async {
     try {
+      if (tickets.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No hay tickets para exportar')),
+        );
+        return;
+      }
+
       final excel = Excel.createExcel();
       final sheet = excel['Tickets'];
-      sheet.appendRow(['Tipo', 'Tipo Doc', 'Comercial', 'Fecha', 'Foto URL']);
+
+      // Encabezado principal
+      sheet.appendRow(['Liquidación de gastos de viaje y representación visa']);
+      sheet.appendRow(['GECONTA medidores de fluidos SL']);
+
+      // Nombre del comercial (si hay filtro, lo muestra; si no, vacío)
+      String comercialName = '';
+      if (filtroComercialId != null &&
+          comercialesMap[filtroComercialId] != null) {
+        comercialName = comercialesMap[filtroComercialId]!;
+      }
+      sheet.appendRow([comercialName]);
+
+      // Mes (si hay filtro de fecha, muestra el mes, si no, vacío)
+      String mes = '';
+      if (selectedDate != null) {
+        mes = DateFormat('MMMM yyyy', 'es_ES').format(selectedDate!);
+      }
+      sheet.appendRow([mes]);
+
+      // Fila vacía para separar
+      sheet.appendRow([]);
+
+      // Encabezados de la tabla
+      sheet.appendRow([
+        'Fecha',
+        'Viaje/Cliente',
+        'Transporte',
+        'Manutención',
+        'Alojamiento',
+        'Varios',
+        'Total'
+      ]);
+
+      // Rellenar la tabla
       for (final doc in tickets) {
         final data = doc.data();
+        final fecha =
+            DateFormat('yyyy-MM-dd').format(data['fechaHora'].toDate());
+        final tipo = data['tipo'] ?? '';
+        final tipoDoc = data['tipoDoc'] ?? '';
+        final viajeCliente = tipoDoc; // Puedes ajustar si tienes otro campo
+        String transporte = '';
+        String manutencion = '';
+        String alojamiento = '';
+        String varios = '';
+
+        // Marca la columna según el tipo
+        switch (tipo) {
+          case 'Transporte':
+            transporte = 'X';
+            break;
+          case 'Manutención':
+            manutencion = 'X';
+            break;
+          case 'Alojamiento':
+            alojamiento = 'X';
+            break;
+          case 'Varios':
+          case 'Gastos de representación':
+            varios = 'X';
+            break;
+        }
+
         sheet.appendRow([
-          data['tipo'] ?? '',
-          data['tipoDoc'] ?? '',
-          data['comercialId'] ?? '',
-          DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate()),
-          data['fotoUrl'] ?? '',
+          fecha,
+          viajeCliente,
+          transporte,
+          manutencion,
+          alojamiento,
+          varios,
+          '', // Total (vacío)
         ]);
       }
+
+      final bytes = excel.encode();
+      if (bytes == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Error: No se pudo generar el archivo Excel')),
+        );
+        return;
+      }
+
+      // --- SOLO PARA WEB ---
+      final blob = html.Blob([bytes],
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      final anchor = html.AnchorElement(href: url)
+        ..setAttribute('download', 'tickets.xlsx')
+        ..click();
+      html.Url.revokeObjectUrl(url);
+      // ---------------------
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error exportando Excel: $e')),
+      );
+      print('Error exportando Excel: $e');
+    }
+  }
+
+  // Exportar ticket seleccionado a Excel
+  Future<void> _exportarExcelTicket(Map<String, dynamic> data) async {
+    try {
+      final excel = Excel.createExcel();
+      final sheet = excel['Ticket'];
+
+      // Añadir encabezados de la hoja Excel
+      sheet.appendRow(['Tipo', 'Tipo Doc', 'Comercial', 'Fecha']);
+
+      // Añadir los datos del ticket sin la imagen
+      sheet.appendRow([
+        data['tipo'] ?? '',
+        data['tipoDoc'] ?? '',
+        comercialesMap[data['comercialId']] ?? 'Desconocido',
+        DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate()),
+      ]);
+
+      // Generar el archivo Excel
       final bytes = excel.encode();
       if (bytes == null) {
         print('Error: No se pudo generar el archivo Excel');
         return;
       }
+
+      // Guardar el archivo Excel en el directorio temporal
       final dir = await getTemporaryDirectory();
-      print('Directorio temporal: ${dir.path}');
-      final file = File('${dir.path}/tickets.xlsx');
+      final file = File(
+          '${dir.path}/ticket_${data['tipoDoc']}_${DateFormat('yyyyMMdd_HHmm').format(data['fechaHora'].toDate())}.xlsx');
       await file.writeAsBytes(bytes);
       print('Archivo guardado en: ${file.path}');
 
-      await Share.shareXFiles([XFile(file.path)], text: 'Tickets exportados');
+      // Compartir el archivo Excel
+      await Share.shareXFiles([XFile(file.path)], text: 'Ticket exportado');
     } catch (e) {
       print('Error exportando Excel: $e');
     }
@@ -341,12 +474,94 @@ class _AdminPageState extends State<AdminPage> {
                   ),
                   const SizedBox(width: 10),
                   // Filtro por fecha
-                  OutlinedButton.icon(
-                    onPressed: _selectDate,
-                    icon: const Icon(Icons.calendar_today),
-                    label: Text(selectedDate == null
-                        ? 'Filtrar por fecha'
-                        : DateFormat('yyyy-MM-dd').format(selectedDate!)),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.calendar_today),
+                      label: Text(selectedDate != null
+                          ? DateFormat('yyyy-MM-dd').format(selectedDate!)
+                          : selectedMonth != null
+                              ? DateFormat('MMMM yyyy', 'es_ES')
+                                  .format(selectedMonth!)
+                              : selectedYear != null
+                                  ? selectedYear.toString()
+                                  : 'Filtrar por fecha'),
+                      onPressed: () async {
+                        // Mostrar menú para elegir tipo de filtro
+                        final tipo = await showModalBottomSheet<String>(
+                          context: context,
+                          builder: (context) => Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              ListTile(
+                                title: const Text('Por día'),
+                                onTap: () => Navigator.pop(context, 'dia'),
+                              ),
+                              ListTile(
+                                title: const Text('Por mes'),
+                                onTap: () => Navigator.pop(context, 'mes'),
+                              ),
+                              ListTile(
+                                title: const Text('Por año'),
+                                onTap: () => Navigator.pop(context, 'anio'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (tipo == 'dia') {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: selectedDate ?? DateTime.now(),
+                            firstDate: DateTime(2023),
+                            lastDate: DateTime.now(),
+                          );
+                          if (picked != null) {
+                            setState(() {
+                              selectedDate = picked;
+                              selectedMonth = null;
+                              selectedYear = null;
+                            });
+                            await _loadTickets(reset: true);
+                          }
+                        } else if (tipo == 'mes') {
+                          final now = DateTime.now();
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate:
+                                selectedMonth ?? DateTime(now.year, now.month),
+                            firstDate: DateTime(2023),
+                            lastDate: now,
+                            selectableDayPredicate: (date) => date.day == 1,
+                          );
+                          if (picked != null) {
+                            setState(() {
+                              selectedDate = null;
+                              selectedMonth =
+                                  DateTime(picked.year, picked.month);
+                              selectedYear = null;
+                            });
+                            await _loadTickets(reset: true);
+                          }
+                        } else if (tipo == 'anio') {
+                          final now = DateTime.now();
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: DateTime(selectedYear ?? now.year),
+                            firstDate: DateTime(2023),
+                            lastDate: now,
+                            selectableDayPredicate: (date) =>
+                                date.month == 1 && date.day == 1,
+                          );
+                          if (picked != null) {
+                            setState(() {
+                              selectedDate = null;
+                              selectedMonth = null;
+                              selectedYear = picked.year;
+                            });
+                            await _loadTickets(reset: true);
+                          }
+                        }
+                      },
+                    ),
                   ),
                   if (selectedDate != null)
                     IconButton(
@@ -357,7 +572,7 @@ class _AdminPageState extends State<AdminPage> {
                 ],
               ),
               const SizedBox(height: 16),
-              // Botones de exportación
+              // Botones de exportación global
               Row(
                 children: [
                   ElevatedButton.icon(
@@ -368,7 +583,7 @@ class _AdminPageState extends State<AdminPage> {
                   const SizedBox(width: 10),
                   ElevatedButton.icon(
                     icon: const Icon(Icons.table_chart),
-                    label: const Text('Exportar a Excel'),
+                    label: const Text('Exportar todo a Excel'),
                     onPressed: tickets.isEmpty ? null : _exportarExcelTodos,
                   ),
                 ],
@@ -411,11 +626,13 @@ class _AdminPageState extends State<AdminPage> {
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
+                                    // Exportar este ticket a PDF
                                     IconButton(
                                       icon: const Icon(Icons.picture_as_pdf),
                                       tooltip: 'Exportar este ticket a PDF',
                                       onPressed: () => _exportarPDFTicket(data),
                                     ),
+                                    // Ver imagen
                                     IconButton(
                                       icon: const Icon(Icons.visibility),
                                       tooltip: 'Ver imagen',
@@ -434,6 +651,13 @@ class _AdminPageState extends State<AdminPage> {
                                               );
                                             }
                                           : null,
+                                    ),
+                                    // Exportar a Excel para esta fila
+                                    IconButton(
+                                      icon: const Icon(Icons.table_chart),
+                                      tooltip: 'Exportar este ticket a Excel',
+                                      onPressed: () =>
+                                          _exportarExcelTicket(data),
                                     ),
                                   ],
                                 ),

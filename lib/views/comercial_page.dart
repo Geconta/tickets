@@ -21,6 +21,10 @@ class _ComercialPageState extends State<ComercialPage> {
   String? filtroTipoTicket;
   DateTime? selectedDate;
   bool isLoading = false;
+  String? tipoTicketNuevo;
+  XFile? imagenFactura;
+  XFile? imagenCopia;
+  bool isUploading = false;
   final tipos = [
     'Transporte',
     'Manutención',
@@ -29,7 +33,8 @@ class _ComercialPageState extends State<ComercialPage> {
     'Gastos de representación',
   ];
 
-  Future<void> _eliminarTicket(String ticketId, String? fotoUrl) async {
+  Future<void> _eliminarTicket(
+      String ticketId, String? fotoFacturaUrl, String? fotoCopiaUrl) async {
     try {
       // Eliminar el documento de Firestore
       await FirebaseFirestore.instance
@@ -37,11 +42,14 @@ class _ComercialPageState extends State<ComercialPage> {
           .doc(ticketId)
           .delete();
 
-      // Si hay una foto, eliminarla de Supabase
-      if (fotoUrl != null) {
-        final supabase = Supabase.instance.client;
-        final fileName =
-            fotoUrl.split('/').last; // Extraer el nombre del archivo
+      // Eliminar ambas imágenes de Supabase si existen
+      final supabase = Supabase.instance.client;
+      if (fotoFacturaUrl != null) {
+        final fileName = fotoFacturaUrl.split('/').last;
+        await supabase.storage.from('ticketsfotos').remove([fileName]);
+      }
+      if (fotoCopiaUrl != null) {
+        final fileName = fotoCopiaUrl.split('/').last;
         await supabase.storage.from('ticketsfotos').remove([fileName]);
       }
 
@@ -140,17 +148,29 @@ class _ComercialPageState extends State<ComercialPage> {
   Future<void> _exportarPDFTicket(Map<String, dynamic> data) async {
     final pdf = pw.Document();
     final formatter = DateFormat('yyyy-MM-dd HH:mm');
-    Uint8List? imageBytes;
 
-    final fotoUrl = data['fotoUrl'];
-    if (fotoUrl != null) {
+    // Descargar ambas imágenes si existen
+    Uint8List? imageFactura;
+    Uint8List? imageCopia;
+
+    if (data['fotoFactura'] != null) {
       try {
-        final response = await http.get(Uri.parse(fotoUrl));
+        final response = await http.get(Uri.parse(data['fotoFactura']));
         if (response.statusCode == 200) {
-          imageBytes = response.bodyBytes;
+          imageFactura = response.bodyBytes;
         }
       } catch (e) {
-        print('Error al descargar imagen: $e');
+        print('Error al descargar imagen factura: $e');
+      }
+    }
+    if (data['fotoCopia'] != null) {
+      try {
+        final response = await http.get(Uri.parse(data['fotoCopia']));
+        if (response.statusCode == 200) {
+          imageCopia = response.bodyBytes;
+        }
+      } catch (e) {
+        print('Error al descargar imagen copia: $e');
       }
     }
 
@@ -160,17 +180,24 @@ class _ComercialPageState extends State<ComercialPage> {
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
             pw.Text('Tipo: ${data['tipo']}'),
-            pw.Text('Tipo Doc: ${data['tipoDoc']}'),
             pw.Text('Fecha: ${formatter.format(data['fechaHora'].toDate())}'),
-            if (imageBytes != null)
+            if (imageFactura != null)
               pw.Padding(
                 padding: const pw.EdgeInsets.symmetric(vertical: 10),
-                child: pw.Image(
-                  pw.MemoryImage(imageBytes),
-                  width: 200,
-                  height: 200,
-                  fit: pw.BoxFit.cover,
-                ),
+                child: pw.Column(children: [
+                  pw.Text('Factura simplificada:'),
+                  pw.Image(pw.MemoryImage(imageFactura),
+                      width: 200, height: 200, fit: pw.BoxFit.cover),
+                ]),
+              ),
+            if (imageCopia != null)
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(vertical: 10),
+                child: pw.Column(children: [
+                  pw.Text('Copia cliente:'),
+                  pw.Image(pw.MemoryImage(imageCopia),
+                      width: 200, height: 200, fit: pw.BoxFit.cover),
+                ]),
               ),
             pw.Divider(),
           ],
@@ -305,50 +332,160 @@ class _ComercialPageState extends State<ComercialPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Formulario de subida
+                    // Título principal
                     Text(
                       'Nuevo ticket',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 10),
-                    DropdownButtonFormField<String>(
-                      value: tipoTicket,
-                      items: tipos
-                          .map(
-                              (t) => DropdownMenuItem(value: t, child: Text(t)))
-                          .toList(),
-                      onChanged: (v) => setState(() => tipoTicket = v),
-                      decoration: const InputDecoration(
-                        labelText: 'Tipo de ticket',
-                        border: OutlineInputBorder(),
+
+                    // NUEVO: Formulario de agregar registro (justo debajo del título)
+                    Card(
+                      margin: const EdgeInsets.only(bottom: 24),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            DropdownButtonFormField<String>(
+                              value: tipoTicketNuevo,
+                              items: tipos
+                                  .map((t) => DropdownMenuItem(
+                                      value: t, child: Text(t)))
+                                  .toList(),
+                              onChanged: (v) =>
+                                  setState(() => tipoTicketNuevo = v),
+                              decoration: const InputDecoration(
+                                  labelText: 'Tipo de ticket',
+                                  border: OutlineInputBorder()),
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    icon: Icon(
+                                      Icons.camera_alt,
+                                      color: imagenFactura == null
+                                          ? Colors.grey
+                                          : Colors.blue,
+                                    ),
+                                    label: Text(imagenFactura == null
+                                        ? 'Subir Factura simplificada'
+                                        : 'Factura lista'),
+                                    onPressed: () async {
+                                      final picker = ImagePicker();
+                                      final picked = await picker.pickImage(
+                                          source: ImageSource.camera,
+                                          imageQuality: 70);
+                                      if (picked != null) {
+                                        setState(() => imagenFactura = picked);
+                                      }
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    icon: Icon(
+                                      Icons.camera_alt_outlined,
+                                      color: imagenCopia == null
+                                          ? Colors.grey
+                                          : Colors.blue,
+                                    ),
+                                    label: Text(imagenCopia == null
+                                        ? 'Subir Copia cliente'
+                                        : 'Copia lista'),
+                                    onPressed: () async {
+                                      final picker = ImagePicker();
+                                      final picked = await picker.pickImage(
+                                          source: ImageSource.camera,
+                                          imageQuality: 70);
+                                      if (picked != null) {
+                                        setState(() => imagenCopia = picked);
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            ElevatedButton(
+                              onPressed: (tipoTicketNuevo != null &&
+                                      imagenFactura != null &&
+                                      imagenCopia != null &&
+                                      !isUploading)
+                                  ? () async {
+                                      setState(() => isUploading = true);
+                                      try {
+                                        final user =
+                                            FirebaseAuth.instance.currentUser;
+                                        if (user == null) return;
+                                        // Subir ambas imágenes
+                                        final supabase =
+                                            Supabase.instance.client;
+                                        final fileNameFactura =
+                                            '${user.uid}_${DateTime.now().millisecondsSinceEpoch}_factura.jpg';
+                                        final fileNameCopia =
+                                            '${user.uid}_${DateTime.now().millisecondsSinceEpoch}_copia.jpg';
+                                        final urlFactura = await supabase
+                                            .storage
+                                            .from('ticketsfotos')
+                                            .uploadBinary(
+                                                fileNameFactura,
+                                                await imagenFactura!
+                                                    .readAsBytes(),
+                                                fileOptions: const FileOptions(
+                                                    upsert: true));
+                                        final urlCopia = await supabase.storage
+                                            .from('ticketsfotos')
+                                            .uploadBinary(
+                                                fileNameCopia,
+                                                await imagenCopia!
+                                                    .readAsBytes(),
+                                                fileOptions: const FileOptions(
+                                                    upsert: true));
+                                        // Guardar en Firestore
+                                        await FirebaseFirestore.instance
+                                            .collection('tickets')
+                                            .add({
+                                          'comercialId': user.uid,
+                                          'tipo': tipoTicketNuevo,
+                                          'fechaHora': DateTime.now(),
+                                          'fotoFactura': supabase.storage
+                                              .from('ticketsfotos')
+                                              .getPublicUrl(fileNameFactura),
+                                          'fotoCopia': supabase.storage
+                                              .from('ticketsfotos')
+                                              .getPublicUrl(fileNameCopia),
+                                        });
+                                        setState(() {
+                                          tipoTicketNuevo = null;
+                                          imagenFactura = null;
+                                          imagenCopia = null;
+                                        });
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(const SnackBar(
+                                                content:
+                                                    Text('Registro creado')));
+                                      } catch (e) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(SnackBar(
+                                                content: Text('Error: $e')));
+                                      } finally {
+                                        setState(() => isUploading = false);
+                                      }
+                                    }
+                                  : null,
+                              child: isUploading
+                                  ? const CircularProgressIndicator()
+                                  : const Text('Crear nuevo registro'),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: tipoTicket == null || isLoading
-                                ? null
-                                : () =>
-                                    _tomarFotoYSubir('Factura simplificada'),
-                            icon: const Icon(Icons.camera_alt),
-                            label: const Text('Factura simplificada'),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: tipoTicket == null || isLoading
-                                ? null
-                                : () =>
-                                    _tomarFotoYSubir('Copia para el cliente'),
-                            icon: const Icon(Icons.camera_alt_outlined),
-                            label: const Text('Copia cliente'),
-                          ),
-                        ),
-                      ],
-                    ),
+
                     if (isLoading)
                       const Padding(
                         padding: EdgeInsets.all(16),
@@ -487,27 +624,10 @@ class _ComercialPageState extends State<ComercialPage> {
                                     return Card(
                                       elevation: 2,
                                       shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
+                                          borderRadius:
+                                              BorderRadius.circular(12)),
                                       child: ListTile(
-                                        leading: data['fotoUrl'] != null
-                                            ? ClipRRect(
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                                child: Image.network(
-                                                  data['fotoUrl'],
-                                                  width: 56,
-                                                  height: 56,
-                                                  fit: BoxFit.cover,
-                                                ),
-                                              )
-                                            : const Icon(Icons.receipt_long,
-                                                color: Colors.indigo, size: 40),
-                                        title: Text(
-                                          '${data['tipoDoc']} - ${data['tipo']}',
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.bold),
-                                        ),
+                                        title: Text('${data['tipo']}'),
                                         subtitle: Text(DateFormat(
                                                 'yyyy-MM-dd HH:mm')
                                             .format(
@@ -516,69 +636,89 @@ class _ComercialPageState extends State<ComercialPage> {
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             IconButton(
-                                              icon: const Icon(
-                                                  Icons.picture_as_pdf),
-                                              tooltip:
-                                                  'Exportar solo este ticket',
-                                              onPressed: () =>
-                                                  _exportarPDFTicket(data),
-                                            ),
-                                            IconButton(
                                               icon:
                                                   const Icon(Icons.visibility),
+                                              tooltip: 'Ver imágenes',
                                               onPressed: () {
                                                 showDialog(
                                                   context: context,
                                                   builder: (_) => Dialog(
-                                                    child: InteractiveViewer(
-                                                      child: Image.network(
-                                                        data['fotoUrl'],
-                                                        fit: BoxFit.contain,
-                                                      ),
+                                                    child: Row(
+                                                      mainAxisSize:
+                                                          MainAxisSize.min,
+                                                      children: [
+                                                        if (data[
+                                                                'fotoFactura'] !=
+                                                            null)
+                                                          Expanded(
+                                                              child: Image.network(
+                                                                  data[
+                                                                      'fotoFactura'],
+                                                                  fit: BoxFit
+                                                                      .contain)),
+                                                        if (data['fotoCopia'] !=
+                                                            null)
+                                                          Expanded(
+                                                              child: Image.network(
+                                                                  data[
+                                                                      'fotoCopia'],
+                                                                  fit: BoxFit
+                                                                      .contain)),
+                                                      ],
                                                     ),
                                                   ),
                                                 );
                                               },
                                             ),
                                             IconButton(
+                                              icon: const Icon(
+                                                  Icons.picture_as_pdf),
+                                              tooltip: 'Exportar PDF',
+                                              onPressed: () =>
+                                                  _exportarPDFTicket(data),
+                                            ),
+                                            IconButton(
                                               icon: const Icon(Icons.delete,
                                                   color: Colors.red),
-                                              tooltip: 'Eliminar ticket',
-                                              onPressed: () {
-                                                final fotoUrl = data['fotoUrl'];
-                                                final ticketId = tickets[index]
-                                                    .id; // asegúrate de extraerlo del ticket
-                                                // Confirmación antes de eliminar
-                                                showDialog(
+                                              tooltip: 'Eliminar',
+                                              onPressed: () async {
+                                                final confirm =
+                                                    await showDialog<bool>(
                                                   context: context,
-                                                  builder: (_) => AlertDialog(
-                                                    title:
-                                                        const Text('Eliminar'),
+                                                  builder: (context) =>
+                                                      AlertDialog(
+                                                    title: const Text(
+                                                        '¿Eliminar ticket?'),
                                                     content: const Text(
                                                         '¿Estás seguro de que deseas eliminar este ticket?'),
                                                     actions: [
                                                       TextButton(
-                                                        onPressed: () {
-                                                          Navigator.of(context)
-                                                              .pop();
-                                                        },
+                                                        onPressed: () =>
+                                                            Navigator.pop(
+                                                                context, false),
                                                         child: const Text(
                                                             'Cancelar'),
                                                       ),
                                                       TextButton(
-                                                        onPressed: () {
-                                                          Navigator.of(context)
-                                                              .pop();
-                                                          _eliminarTicket(
-                                                              ticketId,
-                                                              fotoUrl);
-                                                        },
+                                                        onPressed: () =>
+                                                            Navigator.pop(
+                                                                context, true),
                                                         child: const Text(
-                                                            'Eliminar'),
+                                                            'Eliminar',
+                                                            style: TextStyle(
+                                                                color: Colors
+                                                                    .red)),
                                                       ),
                                                     ],
                                                   ),
                                                 );
+                                                if (confirm == true) {
+                                                  await _eliminarTicket(
+                                                    tickets[index].id,
+                                                    data['fotoFactura'],
+                                                    data['fotoCopia'],
+                                                  );
+                                                }
                                               },
                                             ),
                                           ],
@@ -593,6 +733,7 @@ class _ComercialPageState extends State<ComercialPage> {
                         },
                       ),
                     ),
+                    const SizedBox(height: 24),
                   ],
                 ),
               ),
