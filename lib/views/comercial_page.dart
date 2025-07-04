@@ -92,6 +92,39 @@ class _ComercialPageState extends State<ComercialPage> {
         await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
     if (picked == null) return;
 
+    double? totalEuros;
+    if (tipoDoc == 'Factura simplificada') {
+      // Pide el total al usuario
+      final controller = TextEditingController();
+      final result = await showDialog<double>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Introduce el total en euros'),
+          content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'Total (€)'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text('Cancelar'),
+            ),
+            TextButton(
+              onPressed: () {
+                final value =
+                    double.tryParse(controller.text.replaceAll(',', '.'));
+                Navigator.pop(context, value);
+              },
+              child: const Text('Aceptar'),
+            ),
+          ],
+        ),
+      );
+      if (result == null) return; // Cancelado
+      totalEuros = result;
+    }
+
     setState(() => isLoading = true);
     try {
       final url = await subirImagenASupabase(picked, user.uid);
@@ -102,6 +135,7 @@ class _ComercialPageState extends State<ComercialPage> {
           'tipoDoc': tipoDoc,
           'fotoUrl': url,
           'fechaHora': DateTime.now(),
+          if (totalEuros != null) 'totalEuros': totalEuros,
         });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -628,10 +662,20 @@ class _ComercialPageState extends State<ComercialPage> {
                                               BorderRadius.circular(12)),
                                       child: ListTile(
                                         title: Text('${data['tipo']}'),
-                                        subtitle: Text(DateFormat(
-                                                'yyyy-MM-dd HH:mm')
-                                            .format(
-                                                data['fechaHora'].toDate())),
+                                        subtitle: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                                'Fecha: ${DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate())}'),
+                                            if (data['totalEuros'] != null)
+                                              Text(
+                                                  'Total: €${data['totalEuros']}',
+                                                  style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.bold)),
+                                          ],
+                                        ),
                                         trailing: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [

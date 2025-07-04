@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
 import 'dart:html' as html;
+import 'dart:convert';
 
 class AdminPage extends StatefulWidget {
   const AdminPage({super.key});
@@ -23,8 +24,8 @@ class _AdminPageState extends State<AdminPage> {
   DateTime? selectedDate;
   DateTime? selectedMonth;
   int? selectedYear;
-  String? filtroComercialId;
-  String? filtroTipoTicket;
+  String? filtroComercialId; // null para "Todos los comerciales"
+  String filtroTipoTicket = '';
   static const int pageSize = 10;
   DocumentSnapshot? lastDoc;
   bool isLoading = false;
@@ -62,6 +63,7 @@ class _AdminPageState extends State<AdminPage> {
   } // Obtener datos del usuario desde Firestore
 
   Future<void> _loadTickets({bool reset = false}) async {
+    print('Filtro tipo: "$filtroTipoTicket"');
     if (isLoading) return;
     setState(() => isLoading = true);
 
@@ -92,7 +94,7 @@ class _AdminPageState extends State<AdminPage> {
     if (filtroComercialId != null && filtroComercialId!.isNotEmpty) {
       query = query.where('comercialId', isEqualTo: filtroComercialId);
     }
-    if (filtroTipoTicket != null && filtroTipoTicket != '') {
+    if (filtroTipoTicket != '') {
       query = query.where('tipo', isEqualTo: filtroTipoTicket);
     }
 
@@ -103,6 +105,7 @@ class _AdminPageState extends State<AdminPage> {
     }
 
     final snapshot = await query.get();
+
     if (reset) {
       tickets = [];
       lastDoc = null;
@@ -116,6 +119,7 @@ class _AdminPageState extends State<AdminPage> {
       hasMore = false;
     }
     setState(() => isLoading = false);
+    print('Tickets encontrados: ${snapshot.docs.length}');
   }
 
   void _selectDate() async {
@@ -149,7 +153,7 @@ class _AdminPageState extends State<AdminPage> {
 
   void _onFiltroTipoChanged(String? value) async {
     setState(() {
-      filtroTipoTicket = value;
+      filtroTipoTicket = value ?? '';
     });
     await _loadTickets(reset: true);
   }
@@ -364,6 +368,72 @@ class _AdminPageState extends State<AdminPage> {
     }
   }
 
+  Future<void> _exportarExcelTicketWeb(Map<String, dynamic> data) async {
+    try {
+      final excel = Excel.createExcel();
+      final sheet = excel['Ticket'];
+
+      // Añadir encabezados de la hoja Excel
+      sheet.appendRow(['Tipo', 'Tipo Doc', 'Comercial', 'Fecha']);
+
+      // Añadir los datos del ticket sin la imagen
+      sheet.appendRow([
+        data['tipo'] ?? '',
+        data['tipoDoc'] ?? '',
+        comercialesMap[data['comercialId']] ?? 'Desconocido',
+        DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate()),
+      ]);
+
+      // Generar el archivo Excel
+      final bytes = excel.encode();
+      if (bytes == null) {
+        print('Error: No se pudo generar el archivo Excel');
+        return;
+      }
+
+      // Descargar el archivo Excel en web
+      final blob = html.Blob([bytes],
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      final anchor = html.AnchorElement(href: url)
+        ..setAttribute('download', 'ticket.xlsx')
+        ..click();
+      html.Url.revokeObjectUrl(url);
+    } catch (e) {
+      print('Error exportando Excel: $e');
+    }
+  }
+
+  Future<double?> extraerTotalDeImagenWeb(XFile imagen) async {
+    final bytes = await imagen.readAsBytes();
+    final uri = Uri.parse('https://api.ocr.space/parse/image');
+    final request = http.MultipartRequest('POST', uri)
+      ..fields['language'] = 'spa'
+      ..fields['isOverlayRequired'] = 'false'
+      ..fields['OCREngine'] = '2'
+      ..files.add(
+          http.MultipartFile.fromBytes('file', bytes, filename: 'ticket.jpg'));
+
+    // Puedes usar tu propia API key gratuita de OCR.space, o usar 'helloworld' para pruebas limitadas
+    request.headers['apikey'] = 'helloworld';
+
+    final response = await request.send();
+    final respStr = await response.stream.bytesToString();
+    final jsonResp = json.decode(respStr);
+
+    if (jsonResp['IsErroredOnProcessing'] == false) {
+      final text = jsonResp['ParsedResults'][0]['ParsedText'] as String;
+      // Busca el total with regex
+      final regex = RegExp(r'total[:\s]*([\d\.,]+)', caseSensitive: false);
+      final match = regex.firstMatch(text);
+      if (match != null) {
+        final value = match.group(1)?.replaceAll(',', '.');
+        return double.tryParse(value ?? '');
+      }
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -457,7 +527,7 @@ class _AdminPageState extends State<AdminPage> {
                       value: filtroTipoTicket,
                       items: [
                         const DropdownMenuItem(
-                          value: null,
+                          value: '',
                           child: Text('Todos los tipos'),
                         ),
                         ...tipos.map((t) => DropdownMenuItem(
@@ -618,7 +688,11 @@ class _AdminPageState extends State<AdminPage> {
                                 leading: const Icon(Icons.receipt_long,
                                     color: Colors.indigo, size: 40),
                                 title: Text(
-                                    '${data['tipoDoc']} - ${data['tipo']}'),
+                                  (data['tipoDoc'] != null &&
+                                          data['tipoDoc'].toString().isNotEmpty)
+                                      ? '${data['tipoDoc']} - ${data['tipo']}'
+                                      : '${data['tipo']}',
+                                ),
                                 subtitle: Text(
                                   'Comercial: $comercialName\n'
                                   'Fecha: ${DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate())}',
@@ -652,12 +726,12 @@ class _AdminPageState extends State<AdminPage> {
                                             }
                                           : null,
                                     ),
-                                    // Exportar a Excel para esta fila
+                                    // Exportar a Excel para esta fila (solo web)
                                     IconButton(
                                       icon: const Icon(Icons.table_chart),
                                       tooltip: 'Exportar este ticket a Excel',
                                       onPressed: () =>
-                                          _exportarExcelTicket(data),
+                                          _exportarExcelTicketWeb(data),
                                     ),
                                   ],
                                 ),
