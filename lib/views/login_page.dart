@@ -44,7 +44,7 @@ class _LoginPageState extends State<LoginPage> {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      backgroundColor: colorScheme.surfaceVariant.withOpacity(0.2),
+      backgroundColor: colorScheme.surfaceContainerHighest.withOpacity(0.2),
       body: Center(
         child: SingleChildScrollView(
           child: Padding(

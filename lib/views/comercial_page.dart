@@ -8,6 +8,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:http/http.dart' as http;
 import 'dart:typed_data';
+import 'dart:convert';
 
 class ComercialPage extends StatefulWidget {
   const ComercialPage({super.key});
@@ -32,6 +33,10 @@ class _ComercialPageState extends State<ComercialPage> {
     'Varios',
     'Gastos de representación',
   ];
+
+  String? textoFacturaExtraido;
+  String? totalExtraido;
+  String? establecimientoExtraido;
 
   Future<void> _eliminarTicket(
       String ticketId, String? fotoFacturaUrl, String? fotoCopiaUrl) async {
@@ -102,7 +107,7 @@ class _ComercialPageState extends State<ComercialPage> {
           title: const Text('Introduce el total en euros'),
           content: TextField(
             controller: controller,
-            keyboardType: TextInputType.numberWithOptions(decimal: true),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
             decoration: const InputDecoration(labelText: 'Total (€)'),
           ),
           actions: [
@@ -314,6 +319,48 @@ class _ComercialPageState extends State<ComercialPage> {
     return {'name': 'Sin nombre', 'lastName': ''};
   }
 
+  Future<String?> extraerTextoFacturaWeb(XFile imagen) async {
+    final bytes = await imagen.readAsBytes();
+    final uri = Uri.parse('https://api.ocr.space/parse/image');
+    final request = http.MultipartRequest('POST', uri)
+      ..fields['language'] = 'spa'
+      ..fields['isOverlayRequired'] = 'false'
+      ..fields['OCREngine'] = '2'
+      ..files.add(
+          http.MultipartFile.fromBytes('file', bytes, filename: 'factura.jpg'));
+    request.headers['apikey'] = 'helloworld'; // Para pruebas
+
+    final response = await request.send();
+    final respStr = await response.stream.bytesToString();
+    final jsonResp = json.decode(respStr);
+
+    if (jsonResp['IsErroredOnProcessing'] == false) {
+      final text = jsonResp['ParsedResults'][0]['ParsedText'] as String;
+      return text;
+    }
+    return null;
+  }
+
+  Map<String, String?> extraerDatosFactura(String texto) {
+    // Busca el total (ej: Total: 23,45 o TOTAL 23.45)
+    final totalRegex = RegExp(r'total[:\s]*([\d\.,]+)', caseSensitive: false);
+    final totalMatch = totalRegex.firstMatch(texto);
+    String? total = totalMatch?.group(1)?.replaceAll(',', '.');
+
+    // Busca el nombre del establecimiento (primera línea no vacía)
+    final lines = texto
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    String? establecimiento = lines.isNotEmpty ? lines.first : null;
+
+    return {
+      'total': total,
+      'establecimiento': establecimiento,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<Map<String, String>>(
@@ -333,7 +380,7 @@ class _ComercialPageState extends State<ComercialPage> {
             elevation: 1,
             title: Text(
               'Comercial: ${name.isNotEmpty ? '$name $lastName' : 'Sin nombre'}',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
             actions: [
               IconButton(
@@ -414,6 +461,35 @@ class _ComercialPageState extends State<ComercialPage> {
                                           imageQuality: 70);
                                       if (picked != null) {
                                         setState(() => imagenFactura = picked);
+
+                                        // Extraer texto de la imagen
+                                        setState(() => isUploading = true);
+                                        try {
+                                          final textoFactura =
+                                              await extraerTextoFacturaWeb(
+                                                      imagenFactura!)
+                                                  .timeout(
+                                            const Duration(seconds: 15),
+                                            onTimeout: () => null,
+                                          );
+                                          String? total;
+                                          String? establecimiento;
+                                          if (textoFactura != null) {
+                                            final datos = extraerDatosFactura(
+                                                textoFactura);
+                                            total = datos['total'];
+                                            establecimiento =
+                                                datos['establecimiento'];
+                                          }
+                                          setState(() {
+                                            textoFacturaExtraido = textoFactura;
+                                            totalExtraido = total;
+                                            establecimientoExtraido =
+                                                establecimiento;
+                                          });
+                                        } finally {
+                                          setState(() => isUploading = false);
+                                        }
                                       }
                                     },
                                   ),
@@ -455,7 +531,6 @@ class _ComercialPageState extends State<ComercialPage> {
                                         final user =
                                             FirebaseAuth.instance.currentUser;
                                         if (user == null) return;
-                                        // Subir ambas imágenes
                                         final supabase =
                                             Supabase.instance.client;
                                         final fileNameFactura =
@@ -479,7 +554,7 @@ class _ComercialPageState extends State<ComercialPage> {
                                                     .readAsBytes(),
                                                 fileOptions: const FileOptions(
                                                     upsert: true));
-                                        // Guardar en Firestore
+
                                         await FirebaseFirestore.instance
                                             .collection('tickets')
                                             .add({
@@ -492,11 +567,19 @@ class _ComercialPageState extends State<ComercialPage> {
                                           'fotoCopia': supabase.storage
                                               .from('ticketsfotos')
                                               .getPublicUrl(fileNameCopia),
+                                          'textoFactura': textoFacturaExtraido,
+                                          'totalEuros': double.tryParse(
+                                              totalExtraido ?? ''),
+                                          'establecimiento':
+                                              establecimientoExtraido,
                                         });
                                         setState(() {
                                           tipoTicketNuevo = null;
                                           imagenFactura = null;
                                           imagenCopia = null;
+                                          textoFacturaExtraido = null;
+                                          totalExtraido = null;
+                                          establecimientoExtraido = null;
                                         });
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(const SnackBar(
@@ -538,10 +621,10 @@ class _ComercialPageState extends State<ComercialPage> {
                         // Filtro por tipo
                         Expanded(
                           child: DropdownButtonFormField<String>(
-                            value: filtroTipoTicket,
+                            value: filtroTipoTicket ?? '',
                             items: [
                               const DropdownMenuItem(
-                                value: null,
+                                value: '',
                                 child: Text('Todos los tipos'),
                               ),
                               ...tipos.map((t) => DropdownMenuItem(
@@ -550,7 +633,7 @@ class _ComercialPageState extends State<ComercialPage> {
                                   )),
                             ],
                             onChanged: (v) =>
-                                setState(() => filtroTipoTicket = v),
+                                setState(() => filtroTipoTicket = v ?? ''),
                             decoration: const InputDecoration(
                               labelText: 'Tipo',
                               border: OutlineInputBorder(),
@@ -614,8 +697,7 @@ class _ComercialPageState extends State<ComercialPage> {
                           var tickets = snapshot.data!.docs;
 
                           // Filtro por tipo
-                          if (filtroTipoTicket != null &&
-                              filtroTipoTicket!.isNotEmpty) {
+                          if ((filtroTipoTicket ?? '').isNotEmpty) {
                             tickets = tickets
                                 .where((d) => d['tipo'] == filtroTipoTicket)
                                 .toList();
@@ -668,6 +750,15 @@ class _ComercialPageState extends State<ComercialPage> {
                                           children: [
                                             Text(
                                                 'Fecha: ${DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate())}'),
+                                            if (data['establecimiento'] != null)
+                                              Text(
+                                                  'Establecimiento: ${data['establecimiento']}'),
+                                            if (data['textoFactura'] != null)
+                                              Text(
+                                                'Texto escaneado: ${data['textoFactura']}',
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
                                             if (data['totalEuros'] != null)
                                               Text(
                                                   'Total: €${data['totalEuros']}',
@@ -694,20 +785,25 @@ class _ComercialPageState extends State<ComercialPage> {
                                                         if (data[
                                                                 'fotoFactura'] !=
                                                             null)
-                                                          Expanded(
-                                                              child: Image.network(
-                                                                  data[
-                                                                      'fotoFactura'],
-                                                                  fit: BoxFit
-                                                                      .contain)),
+                                                          Flexible(
+                                                            child:
+                                                                Image.network(
+                                                              data[
+                                                                  'fotoFactura'],
+                                                              fit: BoxFit
+                                                                  .contain,
+                                                            ),
+                                                          ),
                                                         if (data['fotoCopia'] !=
                                                             null)
-                                                          Expanded(
-                                                              child: Image.network(
-                                                                  data[
-                                                                      'fotoCopia'],
-                                                                  fit: BoxFit
-                                                                      .contain)),
+                                                          Flexible(
+                                                            child:
+                                                                Image.network(
+                                                              data['fotoCopia'],
+                                                              fit: BoxFit
+                                                                  .contain,
+                                                            ),
+                                                          ),
                                                       ],
                                                     ),
                                                   ),
