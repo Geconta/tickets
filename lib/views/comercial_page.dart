@@ -38,6 +38,8 @@ class _ComercialPageState extends State<ComercialPage> {
   String? totalExtraido;
   String? establecimientoExtraido;
 
+  final TextEditingController totalController = TextEditingController();
+
   Future<void> _eliminarTicket(
       String ticketId, String? fotoFacturaUrl, String? fotoCopiaUrl) async {
     try {
@@ -343,7 +345,8 @@ class _ComercialPageState extends State<ComercialPage> {
 
   Map<String, String?> extraerDatosFactura(String texto) {
     // Busca el total (ej: Total: 23,45 o TOTAL 23.45)
-    final totalRegex = RegExp(r'total[:\s]*([\d\.,]+)', caseSensitive: false);
+    final totalRegex =
+        RegExp(r'total[^\d]*([\d]+[.,]\d{2})', caseSensitive: false);
     final totalMatch = totalRegex.firstMatch(texto);
     String? total = totalMatch?.group(1)?.replaceAll(',', '.');
 
@@ -354,6 +357,10 @@ class _ComercialPageState extends State<ComercialPage> {
         .where((l) => l.isNotEmpty)
         .toList();
     String? establecimiento = lines.isNotEmpty ? lines.first : null;
+
+    print('Texto OCR: $texto');
+    print('Total extraído: $total');
+    print('Establecimiento extraído: $establecimiento');
 
     return {
       'total': total,
@@ -477,15 +484,16 @@ class _ComercialPageState extends State<ComercialPage> {
                                           if (textoFactura != null) {
                                             final datos = extraerDatosFactura(
                                                 textoFactura);
-                                            total = datos['total'];
                                             establecimiento =
                                                 datos['establecimiento'];
+                                            total = datos['total'];
                                           }
                                           setState(() {
                                             textoFacturaExtraido = textoFactura;
                                             totalExtraido = total;
                                             establecimientoExtraido =
                                                 establecimiento;
+                                            totalController.text = total ?? '';
                                           });
                                         } finally {
                                           setState(() => isUploading = false);
@@ -518,6 +526,22 @@ class _ComercialPageState extends State<ComercialPage> {
                                   ),
                                 ),
                               ],
+                            ),
+                            const SizedBox(height: 10),
+                            TextFormField(
+                              controller: totalController,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
+                              decoration: const InputDecoration(
+                                labelText: 'Total (€) (puedes corregirlo)',
+                                border: OutlineInputBorder(),
+                              ),
+                              onChanged: (value) {
+                                setState(() {
+                                  totalExtraido = value;
+                                });
+                              },
                             ),
                             const SizedBox(height: 10),
                             ElevatedButton(
@@ -569,9 +593,12 @@ class _ComercialPageState extends State<ComercialPage> {
                                               .getPublicUrl(fileNameCopia),
                                           'textoFactura': textoFacturaExtraido,
                                           'totalEuros': double.tryParse(
-                                              totalExtraido ?? ''),
+                                              totalController.text
+                                                  .replaceAll(',', '.')),
                                           'establecimiento':
                                               establecimientoExtraido,
+                                          'totalEuros': double.tryParse(
+                                              totalExtraido ?? ''),
                                         });
                                         setState(() {
                                           tipoTicketNuevo = null;
@@ -580,6 +607,7 @@ class _ComercialPageState extends State<ComercialPage> {
                                           textoFacturaExtraido = null;
                                           totalExtraido = null;
                                           establecimientoExtraido = null;
+                                          totalController.clear();
                                         });
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(const SnackBar(
