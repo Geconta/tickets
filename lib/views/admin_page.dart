@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
 import 'dart:html' as html;
 import 'dart:convert';
+import 'package:syncfusion_flutter_xlsio/xlsio.dart' as xlsio;
 
 class AdminPage extends StatefulWidget {
   const AdminPage({super.key});
@@ -24,6 +25,8 @@ class _AdminPageState extends State<AdminPage> {
   DateTime? selectedDate;
   DateTime? selectedMonth;
   int? selectedYear;
+  DateTime? fechaInicio;
+  DateTime? fechaFin;
   String? filtroComercialId; // null para "Todos los comerciales"
   String filtroTipoTicket = '';
   static const int pageSize = 10;
@@ -71,7 +74,14 @@ class _AdminPageState extends State<AdminPage> {
         .collection('tickets')
         .orderBy('fechaHora', descending: true);
 
-    if (selectedDate != null) {
+    if (fechaInicio != null && fechaFin != null) {
+      final start =
+          DateTime(fechaInicio!.year, fechaInicio!.month, fechaInicio!.day);
+      final end = DateTime(fechaFin!.year, fechaFin!.month, fechaFin!.day + 1);
+      query = query
+          .where('fechaHora', isGreaterThanOrEqualTo: start)
+          .where('fechaHora', isLessThan: end);
+    } else if (selectedDate != null) {
       final start =
           DateTime(selectedDate!.year, selectedDate!.month, selectedDate!.day);
       final end = start.add(const Duration(days: 1));
@@ -227,143 +237,116 @@ class _AdminPageState extends State<AdminPage> {
         return;
       }
 
-      final excel = Excel.createExcel();
-      final sheet = excel['Tickets'];
+      final workbook = xlsio.Workbook();
+      final sheet = workbook.worksheets[0];
+      sheet.name = 'Tickets';
 
-      // Encabezado principal
-      sheet.appendRow(['Liquidación de gastos de viaje y representación visa']);
-      sheet.appendRow(['GECONTA medidores de fluidos SL']);
+      // ==== Estilos ====
+      final tituloStyle = workbook.styles.add('tituloStyle');
+      tituloStyle.fontSize = 16;
+      tituloStyle.bold = true;
+      tituloStyle.fontColor = '#FFFFFF';
+      tituloStyle.backColor = '#4472C4';
+      tituloStyle.hAlign = xlsio.HAlignType.center;
 
-      // Nombre del comercial (si hay filtro, lo muestra; si no, vacío)
-      String comercialName = '';
-      if (filtroComercialId != null &&
-          comercialesMap[filtroComercialId] != null) {
-        comercialName = comercialesMap[filtroComercialId]!;
-      }
-      sheet.appendRow([comercialName]);
+      final subtituloStyle = workbook.styles.add('subtituloStyle');
+      subtituloStyle.fontSize = 12;
+      subtituloStyle.bold = true;
 
-      // Mes (si hay filtro de fecha, muestra el mes, si no, vacío)
+      final encabezadoTablaStyle = workbook.styles.add('encabezadoTabla');
+      encabezadoTablaStyle.bold = true;
+      encabezadoTablaStyle.backColor = '#D9E1F2';
+      encabezadoTablaStyle.hAlign = xlsio.HAlignType.center;
+
+      // ==== Título y subtítulo ====
+      sheet
+          .getRangeByName('A1')
+          .setText('Liquidación de gastos de viaje y representación visa');
+      sheet.getRangeByName('A1').cellStyle = tituloStyle;
+      sheet.getRangeByName('A1').columnWidth = 60;
+
+      sheet.getRangeByName('A2').setText('GECONTA medidores de fluidos SL');
+      sheet.getRangeByName('A2').cellStyle = subtituloStyle;
+
+      // ==== Mes (si hay) ====
       String mes = '';
       if (selectedDate != null) {
         mes = DateFormat('MMMM yyyy', 'es_ES').format(selectedDate!);
+        sheet.getRangeByName('A3').setText(mes);
       }
-      sheet.appendRow([mes]);
 
-      // Fila vacía para separar
-      sheet.appendRow([]);
+      // ==== Fila vacía de separación ====
+      sheet.getRangeByName('A4').setText('');
 
-      // Encabezados de la tabla
-      sheet.appendRow([
+      // ==== Encabezados de tabla ====
+      final headers = [
         'Fecha',
-        'Viaje/Cliente',
         'Transporte',
         'Manutención',
         'Alojamiento',
         'Varios',
         'Total'
-      ]);
+      ];
+      for (int i = 0; i < headers.length; i++) {
+        final cell = sheet.getRangeByIndex(5, i + 1);
+        cell.setText(headers[i]);
+        cell.cellStyle = encabezadoTablaStyle;
+        sheet.autoFitColumn(i + 1);
+      }
 
-      // Rellenar la tabla
+      // ==== Agrupar tickets ====
+      final Map<String, Map<String, double>> resumen = {};
+
       for (final doc in tickets) {
         final data = doc.data();
         final fecha =
             DateFormat('yyyy-MM-dd').format(data['fechaHora'].toDate());
         final tipo = data['tipo'] ?? '';
-        final tipoDoc = data['tipoDoc'] ?? '';
-        final viajeCliente = tipoDoc; // Puedes ajustar si tienes otro campo
-        String transporte = '';
-        String manutencion = '';
-        String alojamiento = '';
-        String varios = '';
+        final total = (data['totalEuros'] is num)
+            ? (data['totalEuros'] as num).toDouble()
+            : double.tryParse(data['totalEuros']?.toString() ?? '') ?? 0.0;
 
-        // Marca la columna según el tipo
-        switch (tipo) {
-          case 'Transporte':
-            transporte = 'X';
-            break;
-          case 'Manutención':
-            manutencion = 'X';
-            break;
-          case 'Alojamiento':
-            alojamiento = 'X';
-            break;
-          case 'Varios':
-          case 'Gastos de representación':
-            varios = 'X';
-            break;
-        }
-
-        sheet.appendRow([
-          fecha,
-          viajeCliente,
-          transporte,
-          manutencion,
-          alojamiento,
-          varios,
-          '', // Total (vacío)
-        ]);
+        resumen.putIfAbsent(fecha, () => {});
+        resumen[fecha]![tipo] = (resumen[fecha]![tipo] ?? 0) + total;
       }
 
-      final bytes = excel.encode();
-      if (bytes == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Error: No se pudo generar el archivo Excel')),
-        );
-        return;
+      // ==== Escribir filas ====
+      int row = 6; // Comienza debajo de los encabezados
+
+      for (final fecha in resumen.keys) {
+        final tipos = resumen[fecha]!;
+
+        final variosTotal =
+            (tipos['Varios'] ?? 0) + (tipos['Gastos de representación'] ?? 0);
+        final totalDia = tipos.values.fold<double>(0, (a, b) => a + b);
+
+        sheet.getRangeByIndex(row, 1).setText(fecha);
+        sheet.getRangeByIndex(row, 2).setNumber(tipos['Transporte'] ?? 0);
+        sheet.getRangeByIndex(row, 3).setNumber(tipos['Manutención'] ?? 0);
+        sheet.getRangeByIndex(row, 4).setNumber(tipos['Alojamiento'] ?? 0);
+        sheet
+            .getRangeByIndex(row, 5)
+            .setNumber(variosTotal > 0 ? variosTotal : 0);
+        sheet.getRangeByIndex(row, 6).setNumber(totalDia);
+
+        row++;
       }
 
-      // --- SOLO PARA WEB ---
-      final blob = html.Blob([bytes],
+      // ==== Guardar y descargar ====
+      final List<int> bytes = workbook.saveAsStream();
+      workbook.dispose();
+
+      final blob = html.Blob([Uint8List.fromList(bytes)],
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       final url = html.Url.createObjectUrlFromBlob(blob);
       final anchor = html.AnchorElement(href: url)
-        ..setAttribute('download', 'tickets.xlsx')
+        ..setAttribute('download', 'gastos.xlsx')
         ..click();
       html.Url.revokeObjectUrl(url);
-      // ---------------------
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error exportando Excel: $e')),
       );
-      print('Error exportando Excel: $e');
-    }
-  }
-
-  // Exportar ticket seleccionado a Excel
-  Future<void> _exportarExcelTicket(Map<String, dynamic> data) async {
-    try {
-      final excel = Excel.createExcel();
-      final sheet = excel['Ticket'];
-
-      // Añadir encabezados de la hoja Excel
-      sheet.appendRow(['Tipo', 'Tipo Doc', 'Comercial', 'Fecha']);
-
-      // Añadir los datos del ticket sin la imagen
-      sheet.appendRow([
-        data['tipo'] ?? '',
-        data['tipoDoc'] ?? '',
-        comercialesMap[data['comercialId']] ?? 'Desconocido',
-        DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate()),
-      ]);
-
-      // Generar el archivo Excel
-      final bytes = excel.encode();
-      if (bytes == null) {
-        print('Error: No se pudo generar el archivo Excel');
-        return;
-      }
-
-      // Guardar el archivo Excel en el directorio temporal
-      final dir = await getTemporaryDirectory();
-      final file = File(
-          '${dir.path}/ticket_${data['tipoDoc']}_${DateFormat('yyyyMMdd_HHmm').format(data['fechaHora'].toDate())}.xlsx');
-      await file.writeAsBytes(bytes);
-      print('Archivo guardado en: ${file.path}');
-
-      // Compartir el archivo Excel
-      await Share.shareXFiles([XFile(file.path)], text: 'Ticket exportado');
-    } catch (e) {
       print('Error exportando Excel: $e');
     }
   }
@@ -434,6 +417,80 @@ class _AdminPageState extends State<AdminPage> {
     return null;
   }
 
+  Future<void> _seleccionarRangoFechas(BuildContext context) async {
+    DateTime tempInicio = fechaInicio ?? DateTime.now();
+    DateTime tempFin = fechaFin ?? DateTime.now();
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Selecciona el rango de fechas'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: Text(
+                    'Desde: ${DateFormat('yyyy-MM-dd').format(tempInicio)}'),
+                trailing: const Icon(Icons.calendar_today),
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: tempInicio,
+                    firstDate: DateTime(2023),
+                    lastDate: DateTime.now(),
+                  );
+                  if (picked != null) {
+                    tempInicio = picked;
+                    if (tempFin.isBefore(tempInicio)) tempFin = tempInicio;
+                    (context as Element).markNeedsBuild();
+                  }
+                },
+              ),
+              ListTile(
+                title:
+                    Text('Hasta: ${DateFormat('yyyy-MM-dd').format(tempFin)}'),
+                trailing: const Icon(Icons.calendar_today),
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: tempFin,
+                    firstDate: tempInicio,
+                    lastDate: DateTime.now(),
+                  );
+                  if (picked != null) {
+                    tempFin = picked;
+                    (context as Element).markNeedsBuild();
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                setState(() {
+                  fechaInicio = tempInicio;
+                  fechaFin = tempFin;
+                  selectedDate = null;
+                  selectedMonth = null;
+                  selectedYear = null;
+                });
+                Navigator.pop(context);
+                _loadTickets(reset: true);
+              },
+              child: const Text('Aplicar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -477,22 +534,11 @@ class _AdminPageState extends State<AdminPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.admin_panel_settings,
-                  size: 64, color: Colors.grey),
-              const SizedBox(height: 24),
-              const Text(
-                'Bienvenido, Administrador',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-              ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
               const Text(
                 'Listado de todos los tickets subidos:',
                 style: TextStyle(fontSize: 18, color: Colors.black54),
-                textAlign: TextAlign.center,
+                textAlign: TextAlign.left,
               ),
               const SizedBox(height: 24),
               // Filtros
@@ -547,97 +593,25 @@ class _AdminPageState extends State<AdminPage> {
                   Expanded(
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.calendar_today),
-                      label: Text(selectedDate != null
-                          ? DateFormat('yyyy-MM-dd').format(selectedDate!)
-                          : selectedMonth != null
-                              ? DateFormat('MMMM yyyy', 'es_ES')
-                                  .format(selectedMonth!)
-                              : selectedYear != null
-                                  ? selectedYear.toString()
-                                  : 'Filtrar por fecha'),
-                      onPressed: () async {
-                        // Mostrar menú para elegir tipo de filtro
-                        final tipo = await showModalBottomSheet<String>(
-                          context: context,
-                          builder: (context) => Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              ListTile(
-                                title: const Text('Por día'),
-                                onTap: () => Navigator.pop(context, 'dia'),
-                              ),
-                              ListTile(
-                                title: const Text('Por mes'),
-                                onTap: () => Navigator.pop(context, 'mes'),
-                              ),
-                              ListTile(
-                                title: const Text('Por año'),
-                                onTap: () => Navigator.pop(context, 'anio'),
-                              ),
-                            ],
-                          ),
-                        );
-                        if (tipo == 'dia') {
-                          final picked = await showDatePicker(
-                            context: context,
-                            initialDate: selectedDate ?? DateTime.now(),
-                            firstDate: DateTime(2023),
-                            lastDate: DateTime.now(),
-                          );
-                          if (picked != null) {
-                            setState(() {
-                              selectedDate = picked;
-                              selectedMonth = null;
-                              selectedYear = null;
-                            });
-                            await _loadTickets(reset: true);
-                          }
-                        } else if (tipo == 'mes') {
-                          final now = DateTime.now();
-                          final picked = await showDatePicker(
-                            context: context,
-                            initialDate:
-                                selectedMonth ?? DateTime(now.year, now.month),
-                            firstDate: DateTime(2023),
-                            lastDate: now,
-                            selectableDayPredicate: (date) => date.day == 1,
-                          );
-                          if (picked != null) {
-                            setState(() {
-                              selectedDate = null;
-                              selectedMonth =
-                                  DateTime(picked.year, picked.month);
-                              selectedYear = null;
-                            });
-                            await _loadTickets(reset: true);
-                          }
-                        } else if (tipo == 'anio') {
-                          final now = DateTime.now();
-                          final picked = await showDatePicker(
-                            context: context,
-                            initialDate: DateTime(selectedYear ?? now.year),
-                            firstDate: DateTime(2023),
-                            lastDate: now,
-                            selectableDayPredicate: (date) =>
-                                date.month == 1 && date.day == 1,
-                          );
-                          if (picked != null) {
-                            setState(() {
-                              selectedDate = null;
-                              selectedMonth = null;
-                              selectedYear = picked.year;
-                            });
-                            await _loadTickets(reset: true);
-                          }
-                        }
-                      },
+                      label: Text(
+                        (fechaInicio != null && fechaFin != null)
+                            ? 'Del ${DateFormat('yyyy-MM-dd').format(fechaInicio!)} al ${DateFormat('yyyy-MM-dd').format(fechaFin!)}'
+                            : 'Filtrar por rango de fechas',
+                      ),
+                      onPressed: () => _seleccionarRangoFechas(context),
                     ),
                   ),
-                  if (selectedDate != null)
+                  if (fechaInicio != null && fechaFin != null)
                     IconButton(
                       icon: const Icon(Icons.clear),
-                      onPressed: _clearDateFilter,
-                      tooltip: 'Limpiar fecha',
+                      onPressed: () async {
+                        setState(() {
+                          fechaInicio = null;
+                          fechaFin = null;
+                        });
+                        await _loadTickets(reset: true);
+                      },
+                      tooltip: 'Limpiar rango',
                     ),
                 ],
               ),
@@ -693,45 +667,105 @@ class _AdminPageState extends State<AdminPage> {
                                       ? '${data['tipoDoc']} - ${data['tipo']}'
                                       : '${data['tipo']}',
                                 ),
-                                subtitle: Text(
-                                  'Comercial: $comercialName\n'
-                                  'Fecha: ${DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate())}',
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Comercial: $comercialName\n'
+                                      'Fecha: ${DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate())}',
+                                    ),
+                                    if (data['establecimiento'] != null)
+                                      Text(
+                                          'Establecimiento: ${data['establecimiento']}'),
+                                    if (data['totalEuros'] != null)
+                                      Text(
+                                        'Total: €${data['totalEuros']}',
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold),
+                                      ),
+                                  ],
                                 ),
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    // Exportar este ticket a PDF
                                     IconButton(
                                       icon: const Icon(Icons.picture_as_pdf),
                                       tooltip: 'Exportar este ticket a PDF',
                                       onPressed: () => _exportarPDFTicket(data),
                                     ),
-                                    // Ver imagen
                                     IconButton(
                                       icon: const Icon(Icons.visibility),
                                       tooltip: 'Ver imagen',
-                                      onPressed: data['fotoUrl'] != null
+                                      onPressed: (data['fotoFactura'] != null ||
+                                              data['fotoCopia'] != null)
                                           ? () {
                                               showDialog(
                                                 context: context,
                                                 builder: (_) => Dialog(
-                                                  child: InteractiveViewer(
-                                                    child: Image.network(
-                                                      data['fotoUrl'],
-                                                      fit: BoxFit.contain,
+                                                  child: SizedBox(
+                                                    width: 800,
+                                                    height: 600,
+                                                    child: InteractiveViewer(
+                                                      child: Row(
+                                                        mainAxisAlignment:
+                                                            MainAxisAlignment
+                                                                .center,
+                                                        children: [
+                                                          if (data[
+                                                                  'fotoFactura'] !=
+                                                              null)
+                                                            Expanded(
+                                                              child: Padding(
+                                                                padding:
+                                                                    const EdgeInsets
+                                                                        .all(
+                                                                        8.0),
+                                                                child: Image
+                                                                    .network(
+                                                                  data[
+                                                                      'fotoFactura'],
+                                                                  fit: BoxFit
+                                                                      .contain,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                          if (data[
+                                                                  'fotoCopia'] !=
+                                                              null)
+                                                            Expanded(
+                                                              child: Padding(
+                                                                padding:
+                                                                    const EdgeInsets
+                                                                        .all(
+                                                                        8.0),
+                                                                child: Image
+                                                                    .network(
+                                                                  data[
+                                                                      'fotoCopia'],
+                                                                  fit: BoxFit
+                                                                      .contain,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                          if (data['fotoFactura'] ==
+                                                                  null &&
+                                                              data['fotoCopia'] ==
+                                                                  null)
+                                                            const Padding(
+                                                              padding:
+                                                                  EdgeInsets
+                                                                      .all(24),
+                                                              child: Text(
+                                                                  'Sin imagen'),
+                                                            ),
+                                                        ],
+                                                      ),
                                                     ),
                                                   ),
                                                 ),
                                               );
                                             }
                                           : null,
-                                    ),
-                                    // Exportar a Excel para esta fila (solo web)
-                                    IconButton(
-                                      icon: const Icon(Icons.table_chart),
-                                      tooltip: 'Exportar este ticket a Excel',
-                                      onPressed: () =>
-                                          _exportarExcelTicketWeb(data),
                                     ),
                                   ],
                                 ),
