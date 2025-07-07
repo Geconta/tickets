@@ -222,6 +222,10 @@ class _ComercialPageState extends State<ComercialPage> {
           children: [
             pw.Text('Tipo: ${data['tipo']}'),
             pw.Text('Fecha: ${formatter.format(data['fechaHora'].toDate())}'),
+            if (data['establecimiento'] != null)
+              pw.Text('Establecimiento: ${data['establecimiento']}'),
+            if (data['totalEuros'] != null)
+              pw.Text('Total: €${data['totalEuros']}'),
             if (imageFactura != null)
               pw.Padding(
                 padding: const pw.EdgeInsets.symmetric(vertical: 10),
@@ -257,18 +261,29 @@ class _ComercialPageState extends State<ComercialPage> {
 
     for (var doc in tickets) {
       final data = doc.data();
-      Uint8List? imageBytes;
+      Uint8List? imageFactura;
+      Uint8List? imageCopia;
 
-      final fotoUrl = data['fotoUrl'];
-      if (fotoUrl != null) {
+      // Descargar imagen de factura
+      if (data['fotoFactura'] != null) {
         try {
-          final response = await http.get(Uri.parse(fotoUrl));
+          final response = await http.get(Uri.parse(data['fotoFactura']));
           if (response.statusCode == 200) {
-            imageBytes = response.bodyBytes;
+            imageFactura = response.bodyBytes;
           }
         } catch (e) {
-          // En caso de error, la imagen no se incluirá
-          print('Error al descargar imagen: $e');
+          print('Error al descargar imagen factura: $e');
+        }
+      }
+      // Descargar imagen de copia
+      if (data['fotoCopia'] != null) {
+        try {
+          final response = await http.get(Uri.parse(data['fotoCopia']));
+          if (response.statusCode == 200) {
+            imageCopia = response.bodyBytes;
+          }
+        } catch (e) {
+          print('Error al descargar imagen copia: $e');
         }
       }
 
@@ -278,17 +293,28 @@ class _ComercialPageState extends State<ComercialPage> {
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
               pw.Text('Tipo: ${data['tipo']}'),
-              pw.Text('Tipo Doc: ${data['tipoDoc']}'),
               pw.Text('Fecha: ${formatter.format(data['fechaHora'].toDate())}'),
-              if (imageBytes != null)
+              if (data['establecimiento'] != null)
+                pw.Text('Establecimiento: ${data['establecimiento']}'),
+              if (data['totalEuros'] != null)
+                pw.Text('Total: €${data['totalEuros']}'),
+              if (imageFactura != null)
                 pw.Padding(
                   padding: const pw.EdgeInsets.symmetric(vertical: 10),
-                  child: pw.Image(
-                    pw.MemoryImage(imageBytes),
-                    width: 200,
-                    height: 200,
-                    fit: pw.BoxFit.cover,
-                  ),
+                  child: pw.Column(children: [
+                    pw.Text('Factura simplificada:'),
+                    pw.Image(pw.MemoryImage(imageFactura),
+                        width: 200, height: 200, fit: pw.BoxFit.cover),
+                  ]),
+                ),
+              if (imageCopia != null)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.symmetric(vertical: 10),
+                  child: pw.Column(children: [
+                    pw.Text('Copia cliente:'),
+                    pw.Image(pw.MemoryImage(imageCopia),
+                        width: 200, height: 200, fit: pw.BoxFit.cover),
+                  ]),
                 ),
               pw.Divider(),
             ],
@@ -781,12 +807,6 @@ class _ComercialPageState extends State<ComercialPage> {
                                             if (data['establecimiento'] != null)
                                               Text(
                                                   'Establecimiento: ${data['establecimiento']}'),
-                                            if (data['textoFactura'] != null)
-                                              Text(
-                                                'Texto escaneado: ${data['textoFactura']}',
-                                                maxLines: 2,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
                                             if (data['totalEuros'] != null)
                                               Text(
                                                   'Total: €${data['totalEuros']}',
