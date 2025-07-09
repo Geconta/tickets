@@ -6,13 +6,12 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:excel/excel.dart';
 import 'dart:typed_data';
-import 'dart:io';
-import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
 import 'dart:html' as html;
 import 'dart:convert';
 import 'package:syncfusion_flutter_xlsio/xlsio.dart' as xlsio;
+import 'package:flutter/services.dart' show rootBundle;
 
 class AdminPage extends StatefulWidget {
   const AdminPage({super.key});
@@ -28,7 +27,6 @@ class _AdminPageState extends State<AdminPage> {
   DateTime? fechaInicio;
   DateTime? fechaFin;
   String? filtroComercialId; // null para "Todos los comerciales"
-  String filtroTipoTicket = '';
   static const int pageSize = 10;
   DocumentSnapshot? lastDoc;
   bool isLoading = false;
@@ -66,10 +64,6 @@ class _AdminPageState extends State<AdminPage> {
   } // Obtener datos del usuario desde Firestore
 
   Future<void> _loadTickets({bool reset = false}) async {
-    print('Filtro tipo: "$filtroTipoTicket"');
-    if (isLoading) return;
-    setState(() => isLoading = true);
-
     Query<Map<String, dynamic>> query = FirebaseFirestore.instance
         .collection('tickets')
         .orderBy('fechaHora', descending: true);
@@ -103,9 +97,6 @@ class _AdminPageState extends State<AdminPage> {
     }
     if (filtroComercialId != null && filtroComercialId!.isNotEmpty) {
       query = query.where('comercialId', isEqualTo: filtroComercialId);
-    }
-    if (filtroTipoTicket != '') {
-      query = query.where('tipo', isEqualTo: filtroTipoTicket);
     }
 
     if (!reset && lastDoc != null) {
@@ -161,69 +152,182 @@ class _AdminPageState extends State<AdminPage> {
     await _loadTickets(reset: true);
   }
 
-  void _onFiltroTipoChanged(String? value) async {
-    setState(() {
-      filtroTipoTicket = value ?? '';
-    });
-    await _loadTickets(reset: true);
-  }
-
   // Exportar todos los tickets filtrados a PDF
-  Future<void> _exportarPDFTodos() async {
+  Future<void> _exportarPDFTodos(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> tickets) async {
     final pdf = pw.Document();
-    for (final doc in tickets) {
+    final font = pw.Font.ttf(
+      await rootBundle.load('assets/fonts/Roboto-Regular.ttf'),
+    );
+
+    // Cargar todos los usuarios de una vez
+    final usuariosSnapshot =
+        await FirebaseFirestore.instance.collection('users').get();
+    final Map<String, Map<String, dynamic>> mapaUsuarios = {
+      for (var doc in usuariosSnapshot.docs) doc.id: doc.data()
+    };
+
+    for (var doc in tickets) {
       final data = doc.data();
+
+      // Buscar comercial
+      final comercialId = data['comercialId'];
+      final comercial = mapaUsuarios[comercialId];
+      final nombre = comercial?['name'] ?? 'Desconocido';
+      final apellido = comercial?['lastName'] ?? '';
+
+      // Descargar imágenes en paralelo
+      final futures = <Future<Uint8List?>>[];
+
+      if (data['fotoFactura'] != null) {
+        futures.add(_descargarImagen(data['fotoFactura']));
+      } else {
+        futures.add(Future.value(null));
+      }
+
+      if (data['fotoCopia'] != null) {
+        futures.add(_descargarImagen(data['fotoCopia']));
+      } else {
+        futures.add(Future.value(null));
+      }
+
+      final results = await Future.wait(futures);
+      final imageFactura = results[0];
+      final imageCopia = results[1];
+
+      // Crear la página PDF
       pdf.addPage(
         pw.Page(
+          theme: pw.ThemeData.withFont(base: font),
           build: (context) => pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
               pw.Text('Tipo: ${data['tipo']}'),
-              pw.Text('Tipo Doc: ${data['tipoDoc']}'),
-              pw.Text('Comercial: ${data['comercialId']}'),
+              pw.Text('Comercial: $nombre $apellido'),
               pw.Text(
                   'Fecha: ${DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate())}'),
+              if (data['establecimiento'] != null)
+                pw.Text('Establecimiento: ${data['establecimiento']}'),
+              if (data['totalEuros'] != null)
+                pw.Text('Total: € ${data['totalEuros']}'),
               pw.SizedBox(height: 10),
-              if (data['fotoUrl'] != null)
-                pw.Text('Imagen adjunta (no se muestra en PDF por lote)'),
+              if (imageFactura != null)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.symmetric(vertical: 10),
+                  child: pw.Column(children: [
+                    pw.Text('Factura simplificada:'),
+                    pw.Image(pw.MemoryImage(imageFactura),
+                        width: 200, height: 200, fit: pw.BoxFit.cover),
+                  ]),
+                ),
+              if (imageCopia != null)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.symmetric(vertical: 10),
+                  child: pw.Column(children: [
+                    pw.Text('Copia cliente:'),
+                    pw.Image(pw.MemoryImage(imageCopia),
+                        width: 200, height: 200, fit: pw.BoxFit.cover),
+                  ]),
+                ),
               pw.Divider(),
             ],
           ),
         ),
       );
     }
+
     await Printing.layoutPdf(onLayout: (format) async => pdf.save());
   }
 
-  // Exportar ticket seleccionado a PDF (con imagen)
-  Future<void> _exportarPDFTicket(Map<String, dynamic> data) async {
-    final pdf = pw.Document();
-    Uint8List? imageBytes;
-    if (data['fotoUrl'] != null) {
-      try {
-        final response = await http.get(Uri.parse(data['fotoUrl']));
-        if (response.statusCode == 200) {
-          imageBytes = response.bodyBytes;
-        }
-      } catch (_) {}
+  Future<Uint8List?> _descargarImagen(String url) async {
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        return response.bodyBytes;
+      } else {
+        print('Error al descargar imagen: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('Error al descargar imagen: $e');
     }
+    return null;
+  }
+
+  // Exportar un ticket específico a PDF
+  Future<void> _exportarPDFTicket(
+    QueryDocumentSnapshot<Map<String, dynamic>> ticket,
+  ) async {
+    final pdf = pw.Document();
+    final formatter = DateFormat('yyyy-MM-dd HH:mm');
+    final data = ticket.data();
+
+    Uint8List? imageFactura;
+    Uint8List? imageCopia;
+
+    // Descargar imagen de factura
+    if (data['fotoFactura'] != null) {
+      try {
+        final response = await http.get(Uri.parse(data['fotoFactura']));
+        if (response.statusCode == 200) {
+          imageFactura = response.bodyBytes;
+        }
+      } catch (e) {
+        print('Error al descargar imagen factura: $e');
+      }
+    }
+    // Descargar imagen de copia
+    if (data['fotoCopia'] != null) {
+      try {
+        final response = await http.get(Uri.parse(data['fotoCopia']));
+        if (response.statusCode == 200) {
+          imageCopia = response.bodyBytes;
+        }
+      } catch (e) {
+        print('Error al descargar imagen copia: $e');
+      }
+    }
+    final font = pw.Font.ttf(
+      await rootBundle.load('assets/fonts/Roboto-Regular.ttf'),
+    );
+
     pdf.addPage(
       pw.Page(
+        theme: pw.ThemeData.withFont(
+          base: font,
+        ),
         build: (context) => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
             pw.Text('Tipo: ${data['tipo']}'),
-            pw.Text('Tipo Doc: ${data['tipoDoc']}'),
-            pw.Text('Comercial: ${data['comercialId']}'),
-            pw.Text(
-                'Fecha: ${DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate())}'),
-            pw.SizedBox(height: 10),
-            if (imageBytes != null)
-              pw.Image(pw.MemoryImage(imageBytes), width: 200, height: 200),
+            pw.Text('Fecha: ${formatter.format(data['fechaHora'].toDate())}'),
+            if (data['establecimiento'] != null)
+              pw.Text('Establecimiento: ${data['establecimiento']}'),
+            if (data['totalEuros'] != null)
+              pw.Text('Total: € ${data['totalEuros']}'),
+            if (imageFactura != null)
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(vertical: 10),
+                child: pw.Column(children: [
+                  pw.Text('Factura simplificada:'),
+                  pw.Image(pw.MemoryImage(imageFactura),
+                      width: 200, height: 200, fit: pw.BoxFit.cover),
+                ]),
+              ),
+            if (imageCopia != null)
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(vertical: 10),
+                child: pw.Column(children: [
+                  pw.Text('Copia cliente:'),
+                  pw.Image(pw.MemoryImage(imageCopia),
+                      width: 200, height: 200, fit: pw.BoxFit.cover),
+                ]),
+              ),
+            pw.Divider(),
           ],
         ),
       ),
     );
+    // Mostrar el PDF generado
     await Printing.layoutPdf(onLayout: (format) async => pdf.save());
   }
 
@@ -566,28 +670,7 @@ class _AdminPageState extends State<AdminPage> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  // Filtro por tipo
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: filtroTipoTicket,
-                      items: [
-                        const DropdownMenuItem(
-                          value: '',
-                          child: Text('Todos los tipos'),
-                        ),
-                        ...tipos.map((t) => DropdownMenuItem(
-                              value: t,
-                              child: Text(t),
-                            )),
-                      ],
-                      onChanged: _onFiltroTipoChanged,
-                      decoration: const InputDecoration(
-                        labelText: 'Tipo',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
+
                   const SizedBox(width: 10),
                   // Filtro por fecha
                   Expanded(
@@ -622,7 +705,23 @@ class _AdminPageState extends State<AdminPage> {
                   ElevatedButton.icon(
                     icon: const Icon(Icons.picture_as_pdf),
                     label: const Text('Exportar todo a PDF'),
-                    onPressed: tickets.isEmpty ? null : _exportarPDFTodos,
+                    onPressed: () async {
+                      try {
+                        final snapshot = await FirebaseFirestore.instance
+                            .collection('tickets')
+                            .get();
+
+                        if (snapshot.docs.isEmpty) {
+                          print('⚠️ No hay tickets para exportar.');
+                          return;
+                        }
+
+                        await _exportarPDFTodos(snapshot.docs);
+                      } catch (e, st) {
+                        print('❌ Error al exportar PDF: $e');
+                        print(st);
+                      }
+                    },
                   ),
                   const SizedBox(width: 10),
                   ElevatedButton.icon(
@@ -654,7 +753,8 @@ class _AdminPageState extends State<AdminPage> {
                                   ),
                                 );
                               }
-                              final data = tickets[index].data();
+                              final ticket = tickets[index];
+                              final data = ticket.data();
                               final comercialName =
                                   comercialesMap[data['comercialId']] ??
                                       'Desconocido';
@@ -691,7 +791,8 @@ class _AdminPageState extends State<AdminPage> {
                                     IconButton(
                                       icon: const Icon(Icons.picture_as_pdf),
                                       tooltip: 'Exportar este ticket a PDF',
-                                      onPressed: () => _exportarPDFTicket(data),
+                                      onPressed: () =>
+                                          _exportarPDFTicket(ticket),
                                     ),
                                     IconButton(
                                       icon: const Icon(Icons.visibility),

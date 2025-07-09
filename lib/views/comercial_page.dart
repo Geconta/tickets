@@ -9,6 +9,7 @@ import 'package:printing/printing.dart';
 import 'package:http/http.dart' as http;
 import 'dart:typed_data';
 import 'dart:convert';
+import 'package:flutter/services.dart' show rootBundle;
 
 class ComercialPage extends StatefulWidget {
   const ComercialPage({super.key});
@@ -189,6 +190,9 @@ class _ComercialPageState extends State<ComercialPage> {
   Future<void> _exportarPDFTicket(Map<String, dynamic> data) async {
     final pdf = pw.Document();
     final formatter = DateFormat('yyyy-MM-dd HH:mm');
+    final font = pw.Font.ttf(
+      await rootBundle.load('assets/fonts/Roboto-Regular.ttf'),
+    );
 
     // Descargar ambas imágenes si existen
     Uint8List? imageFactura;
@@ -217,6 +221,9 @@ class _ComercialPageState extends State<ComercialPage> {
 
     pdf.addPage(
       pw.Page(
+        theme: pw.ThemeData.withFont(
+          base: font,
+        ),
         build: (context) => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
@@ -225,7 +232,7 @@ class _ComercialPageState extends State<ComercialPage> {
             if (data['establecimiento'] != null)
               pw.Text('Establecimiento: ${data['establecimiento']}'),
             if (data['totalEuros'] != null)
-              pw.Text('Total: €${data['totalEuros']}'),
+              pw.Text('Total: € ${data['totalEuros']}'),
             if (imageFactura != null)
               pw.Padding(
                 padding: const pw.EdgeInsets.symmetric(vertical: 10),
@@ -560,7 +567,7 @@ class _ComercialPageState extends State<ComercialPage> {
                                   const TextInputType.numberWithOptions(
                                       decimal: true),
                               decoration: const InputDecoration(
-                                labelText: 'Total (€) (puedes corregirlo)',
+                                labelText: 'Total (€)',
                                 border: OutlineInputBorder(),
                               ),
                               onChanged: (value) {
