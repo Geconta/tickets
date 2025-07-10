@@ -10,6 +10,8 @@ import 'package:http/http.dart' as http;
 import 'dart:typed_data';
 import 'dart:convert';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:google_ml_kit/google_ml_kit.dart';
+import 'dart:io';
 
 class ComercialPage extends StatefulWidget {
   const ComercialPage({super.key});
@@ -95,42 +97,100 @@ class _ComercialPageState extends State<ComercialPage> {
   Future<void> _tomarFotoYSubir(String tipoDoc) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || tipoTicket == null) return;
+
     final picker = ImagePicker();
     final picked =
-        await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
+        await picker.pickImage(source: ImageSource.camera, imageQuality: 80);
     if (picked == null) return;
 
     double? totalEuros;
+
     if (tipoDoc == 'Factura simplificada') {
-      // Pide el total al usuario
-      final controller = TextEditingController();
-      final result = await showDialog<double>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Introduce el total en euros'),
-          content: TextField(
-            controller: controller,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(labelText: 'Total (€)'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, null),
-              child: const Text('Cancelar'),
+      try {
+        final inputImage = InputImage.fromFile(File(picked.path));
+        final textRecognizer = GoogleMlKit.vision.textRecognizer();
+        final recognizedText = await textRecognizer.processImage(inputImage);
+        await textRecognizer.close();
+
+        final allText = recognizedText.text.toLowerCase();
+        final lines = allText.split('\n').map((line) => line.trim()).toList();
+
+        // Normalizar texto para eliminar espacios redundantes
+        String normalize(String text) =>
+            text.replaceAll(RegExp(r'[€\s]'), '').replaceAll(',', '.');
+
+        // Candidatos a total
+        final possibleTotals = <double>[];
+
+        final totalPatterns = [
+          RegExp(r'(total[^a-zA-Z0-9]?[:\-]?\s*€?\s*([\d,.]+))'),
+          RegExp(r'(importe\s*total[^a-zA-Z0-9]?[:\-]?\s*€?\s*([\d,.]+))'),
+          RegExp(r'(totalfactura[^a-zA-Z0-9]?[:\-]?\s*€?\s*([\d,.]+))'),
+          RegExp(r'(importe[^a-zA-Z0-9]?[:\-]?\s*([\d,.]+))'),
+        ];
+
+        for (final line in lines) {
+          for (final pattern in totalPatterns) {
+            final match = pattern.firstMatch(line);
+            if (match != null) {
+              final rawValue = match.group(2)?.replaceAll(',', '.');
+              final value = double.tryParse(normalize(rawValue ?? ''));
+              if (value != null) possibleTotals.add(value);
+            }
+          }
+        }
+
+        // Si no encontró expresiones directas, buscar el número más alto en el texto (posible total)
+        if (possibleTotals.isEmpty) {
+          final looseNumberPattern = RegExp(r'([\d]+[.,][\d]{2})');
+          for (final match in looseNumberPattern.allMatches(allText)) {
+            final raw = match.group(1)?.replaceAll(',', '.');
+            final value = double.tryParse(normalize(raw ?? ''));
+            if (value != null && value > 0) possibleTotals.add(value);
+          }
+        }
+
+        // Asumimos que el total es el número más alto entre los encontrados
+        totalEuros = possibleTotals.isNotEmpty
+            ? possibleTotals.reduce((a, b) => a > b ? a : b)
+            : null;
+
+        if (totalEuros == null) {
+          final controller = TextEditingController();
+          final result = await showDialog<double>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('No se detectó el total'),
+              content: TextField(
+                controller: controller,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration:
+                    const InputDecoration(labelText: 'Introduce el total (€)'),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, null),
+                  child: const Text('Cancelar'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    final value =
+                        double.tryParse(controller.text.replaceAll(',', '.'));
+                    Navigator.pop(context, value);
+                  },
+                  child: const Text('Aceptar'),
+                ),
+              ],
             ),
-            TextButton(
-              onPressed: () {
-                final value =
-                    double.tryParse(controller.text.replaceAll(',', '.'));
-                Navigator.pop(context, value);
-              },
-              child: const Text('Aceptar'),
-            ),
-          ],
-        ),
-      );
-      if (result == null) return; // Cancelado
-      totalEuros = result;
+          );
+          if (result == null) return;
+          totalEuros = result;
+        }
+      } catch (e) {
+        print('❌ Error al escanear OCR: $e');
+        return;
+      }
     }
 
     setState(() => isLoading = true);
@@ -145,25 +205,21 @@ class _ComercialPageState extends State<ComercialPage> {
           'fechaHora': DateTime.now(),
           if (totalEuros != null) 'totalEuros': totalEuros,
         });
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Foto subida como $tipoDoc')),
           );
         }
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Error al subir la imagen a Supabase')),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          const SnackBar(content: Text('Error al subir imagen a Supabase')),
         );
       }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
@@ -377,26 +433,70 @@ class _ComercialPageState extends State<ComercialPage> {
   }
 
   Map<String, String?> extraerDatosFactura(String texto) {
-    // Busca el total (ej: Total: 23,45 o TOTAL 23.45)
-    final totalRegex =
-        RegExp(r'total[^\d]*([\d]+[.,]\d{2})', caseSensitive: false);
-    final totalMatch = totalRegex.firstMatch(texto);
-    String? total = totalMatch?.group(1)?.replaceAll(',', '.');
-
-    // Busca el nombre del establecimiento (primera línea no vacía)
     final lines = texto
         .split('\n')
         .map((l) => l.trim())
         .where((l) => l.isNotEmpty)
         .toList();
-    String? establecimiento = lines.isNotEmpty ? lines.first : null;
+
+    // ===== 1. Normalizar texto completo para búsqueda de totales =====
+    final fullText = lines.join('\n').toLowerCase();
+
+    // ===== 2. Patrones comunes para detectar total =====
+    final patronesTotal = [
+      RegExp(r'(total[^a-zA-Z0-9]?[:\-]?\s*€?\s*([\d.,]+))',
+          caseSensitive: false),
+      RegExp(r'(importe\s*total[^a-zA-Z0-9]?[:\-]?\s*([\d.,]+))',
+          caseSensitive: false),
+      RegExp(r'(totalfactura[^a-zA-Z0-9]?[:\-]?\s*([\d.,]+))',
+          caseSensitive: false),
+      RegExp(r'(importe[^a-zA-Z0-9]?[:\-]?\s*([\d.,]+))', caseSensitive: false),
+    ];
+
+    double? totalEncontrado;
+    final posiblesTotales = <double>[];
+
+    for (final patron in patronesTotal) {
+      for (final match in patron.allMatches(fullText)) {
+        final raw = match.group(2);
+        final normalizado =
+            raw?.replaceAll(',', '.').replaceAll(RegExp(r'[^\d.]'), '');
+        final valor = double.tryParse(normalizado ?? '');
+        if (valor != null) posiblesTotales.add(valor);
+      }
+    }
+
+    // Si no se encuentra usando los patrones, buscar números sueltos
+    if (posiblesTotales.isEmpty) {
+      final numeroSueltos = RegExp(r'([\d]+[.,][\d]{2})');
+      for (final match in numeroSueltos.allMatches(fullText)) {
+        final raw = match.group(1);
+        final valor = double.tryParse(raw?.replaceAll(',', '.') ?? '');
+        if (valor != null && valor > 0) posiblesTotales.add(valor);
+      }
+    }
+
+    // Suponer que el total es el número más alto detectado
+    if (posiblesTotales.isNotEmpty) {
+      totalEncontrado = posiblesTotales.reduce((a, b) => a > b ? a : b);
+    }
+
+    // ===== 3. Determinar establecimiento (la línea más "típica") =====
+    String? establecimiento;
+    if (lines.isNotEmpty) {
+      // Excluir líneas con solo números o muy cortas
+      establecimiento = lines.firstWhere(
+        (l) => l.length > 3 && !RegExp(r'^\d+$').hasMatch(l),
+        orElse: () => lines.first,
+      );
+    }
 
     print('Texto OCR: $texto');
-    print('Total extraído: $total');
+    print('Total extraído: ${totalEncontrado?.toStringAsFixed(2)}');
     print('Establecimiento extraído: $establecimiento');
 
     return {
-      'total': total,
+      'total': totalEncontrado?.toStringAsFixed(2),
       'establecimiento': establecimiento,
     };
   }

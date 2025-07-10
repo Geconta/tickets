@@ -49,6 +49,7 @@ dependencies:
   google_fonts: ^6.1.0
   syncfusion_flutter_xlsio: ^24.2.8
   flex_color_scheme: ^7.0.0
+  google_ml_kit: ^0.16.2
  
   
 
