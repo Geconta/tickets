@@ -732,7 +732,7 @@ class _ComercialPageState extends State<ComercialPage> {
                 Expanded(
                   child: ElevatedButton.icon(
                     icon: Icon(
-                      Icons.camera_alt_outlined,
+                      Icons.camera_alt,
                       color: imagenCopia == null ? Colors.grey : Colors.blue,
                     ),
                     label: Text(imagenCopia == null
@@ -767,6 +767,23 @@ class _ComercialPageState extends State<ComercialPage> {
             ),
             const SizedBox(height: 10),
             ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: (tipoTicketNuevo != null &&
+                        imagenFactura != null &&
+                        imagenCopia != null &&
+                        !isUploading)
+                    ? Colors
+                        .blue[700] // Color más oscuro cuando está habilitado
+                    : Colors
+                        .grey[400], // Color más claro cuando está deshabilitado
+
+                foregroundColor: (tipoTicketNuevo != null &&
+                        imagenFactura != null &&
+                        imagenCopia != null &&
+                        !isUploading)
+                    ? Colors.white // Texto blanco si habilitado
+                    : Colors.white70, // Texto más tenue si deshabilitado
+              ),
               onPressed: (tipoTicketNuevo != null &&
                       imagenFactura != null &&
                       imagenCopia != null &&
