@@ -107,8 +107,7 @@ class _LoginPageState extends State<LoginPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.lock_person_rounded,
-                        size: 64, color: colorScheme.primary),
+                    Image.asset('assets/images/geconta.jpg', height: 64),
                     const SizedBox(height: 24),
                     Text(
                       'Bienvenido de nuevo',
