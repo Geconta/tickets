@@ -595,20 +595,64 @@ class _AdminPageState extends State<AdminPage> {
     );
   }
 
+  void _verImagenDialog(Map<String, dynamic> data) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        child: SizedBox(
+          width: 800,
+          height: 600,
+          child: InteractiveViewer(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (data['fotoFactura'] != null)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Image.network(
+                        data['fotoFactura'],
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ),
+                if (data['fotoCopia'] != null)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Image.network(
+                        data['fotoCopia'],
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ),
+                if (data['fotoFactura'] == null && data['fotoCopia'] == null)
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text('Sin imagen'),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F6FA),
+      backgroundColor: colorScheme.surfaceVariant.withOpacity(0.1),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 1,
-        title: const Text(
-          'Panel de Administrador',
-          style: TextStyle(color: Colors.black87),
-        ),
+        title: Text('Panel de Administrador', style: textTheme.titleLarge),
         actions: [
           IconButton(
-            icon: const Icon(Icons.logout, color: Colors.black54),
+            icon: const Icon(Icons.logout),
             tooltip: 'Cerrar sesión',
             onPressed: () async {
               await FirebaseAuth.instance.signOut();
@@ -618,263 +662,200 @@ class _AdminPageState extends State<AdminPage> {
             },
           ),
         ],
-        iconTheme: const IconThemeData(color: Colors.black54),
       ),
-      body: Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
-          padding: const EdgeInsets.all(32),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.grey.withOpacity(0.10),
-                blurRadius: 24,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 10),
-              const Text(
-                'Listado de todos los tickets subidos:',
-                style: TextStyle(fontSize: 18, color: Colors.black54),
-                textAlign: TextAlign.left,
-              ),
-              const SizedBox(height: 24),
-              // Filtros
-              Row(
-                children: [
-                  // Filtro por comercialId
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: filtroComercialId,
-                      items: [
-                        const DropdownMenuItem(
-                          value: null,
-                          child: Text('Todos los comerciales'),
-                        ),
-                        ...comercialesMap.entries
-                            .map((entry) => DropdownMenuItem(
-                                  value: entry.key,
-                                  child: Text(entry.value),
-                                )),
-                      ],
-                      onChanged: _onFiltroComercialChanged,
-                      decoration: const InputDecoration(
-                        labelText: 'Comercial',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1000),
+            child: Card(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24)),
+              elevation: 6,
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Listado de Tickets',
+                        style: textTheme.headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 16),
 
-                  const SizedBox(width: 10),
-                  // Filtro por fecha
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.calendar_today),
-                      label: Text(
-                        (fechaInicio != null && fechaFin != null)
-                            ? 'Del ${DateFormat('yyyy-MM-dd').format(fechaInicio!)} al ${DateFormat('yyyy-MM-dd').format(fechaFin!)}'
-                            : 'Filtrar por rango de fechas',
-                      ),
-                      onPressed: () => _seleccionarRangoFechas(context),
-                    ),
-                  ),
-                  if (fechaInicio != null && fechaFin != null)
-                    IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () async {
-                        setState(() {
-                          fechaInicio = null;
-                          fechaFin = null;
-                        });
-                        await _loadTickets(reset: true);
-                      },
-                      tooltip: 'Limpiar rango',
-                    ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              // Botones de exportación global
-              Row(
-                children: [
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.picture_as_pdf),
-                    label: const Text('Exportar todo a PDF'),
-                    onPressed: () async {
-                      try {
-                        final snapshot = await FirebaseFirestore.instance
-                            .collection('tickets')
-                            .get();
-
-                        if (snapshot.docs.isEmpty) {
-                          print('⚠️ No hay tickets para exportar.');
-                          return;
-                        }
-
-                        await _exportarPDFTodos(snapshot.docs);
-                      } catch (e, st) {
-                        print('❌ Error al exportar PDF: $e');
-                        print(st);
-                      }
-                    },
-                  ),
-                  const SizedBox(width: 10),
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.table_chart),
-                    label: const Text('Exportar todo a Excel'),
-                    onPressed: tickets.isEmpty ? null : _exportarExcelTodos,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              // Listado de tickets paginado
-              Expanded(
-                child: tickets.isEmpty && isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : tickets.isEmpty
-                        ? const Center(child: Text('No hay tickets subidos.'))
-                        : ListView.separated(
-                            itemCount: tickets.length + (hasMore ? 1 : 0),
-                            separatorBuilder: (_, __) => const Divider(),
-                            itemBuilder: (context, index) {
-                              if (index == tickets.length) {
-                                // Botón para cargar más
-                                return Center(
-                                  child: TextButton.icon(
-                                    icon: const Icon(Icons.expand_more),
-                                    label: const Text('Cargar más'),
-                                    onPressed:
-                                        isLoading ? null : () => _loadTickets(),
-                                  ),
-                                );
-                              }
-                              final ticket = tickets[index];
-                              final data = ticket.data();
-                              final comercialName =
-                                  comercialesMap[data['comercialId']] ??
-                                      'Desconocido';
-                              return ListTile(
-                                leading: const Icon(Icons.receipt_long,
-                                    color: Colors.indigo, size: 40),
-                                title: Text(
-                                  (data['tipoDoc'] != null &&
-                                          data['tipoDoc'].toString().isNotEmpty)
-                                      ? '${data['tipoDoc']} - ${data['tipo']}'
-                                      : '${data['tipo']}',
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Comercial: $comercialName\n'
-                                      'Fecha: ${DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate())}',
-                                    ),
-                                    if (data['establecimiento'] != null)
-                                      Text(
-                                          'Establecimiento: ${data['establecimiento']}'),
-                                    if (data['totalEuros'] != null)
-                                      Text(
-                                        'Total: €${data['totalEuros']}',
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.bold),
-                                      ),
-                                  ],
-                                ),
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.picture_as_pdf),
-                                      tooltip: 'Exportar este ticket a PDF',
-                                      onPressed: () =>
-                                          _exportarPDFTicket(ticket),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.visibility),
-                                      tooltip: 'Ver imagen',
-                                      onPressed: (data['fotoFactura'] != null ||
-                                              data['fotoCopia'] != null)
-                                          ? () {
-                                              showDialog(
-                                                context: context,
-                                                builder: (_) => Dialog(
-                                                  child: SizedBox(
-                                                    width: 800,
-                                                    height: 600,
-                                                    child: InteractiveViewer(
-                                                      child: Row(
-                                                        mainAxisAlignment:
-                                                            MainAxisAlignment
-                                                                .center,
-                                                        children: [
-                                                          if (data[
-                                                                  'fotoFactura'] !=
-                                                              null)
-                                                            Expanded(
-                                                              child: Padding(
-                                                                padding:
-                                                                    const EdgeInsets
-                                                                        .all(
-                                                                        8.0),
-                                                                child: Image
-                                                                    .network(
-                                                                  data[
-                                                                      'fotoFactura'],
-                                                                  fit: BoxFit
-                                                                      .contain,
-                                                                ),
-                                                              ),
-                                                            ),
-                                                          if (data[
-                                                                  'fotoCopia'] !=
-                                                              null)
-                                                            Expanded(
-                                                              child: Padding(
-                                                                padding:
-                                                                    const EdgeInsets
-                                                                        .all(
-                                                                        8.0),
-                                                                child: Image
-                                                                    .network(
-                                                                  data[
-                                                                      'fotoCopia'],
-                                                                  fit: BoxFit
-                                                                      .contain,
-                                                                ),
-                                                              ),
-                                                            ),
-                                                          if (data['fotoFactura'] ==
-                                                                  null &&
-                                                              data['fotoCopia'] ==
-                                                                  null)
-                                                            const Padding(
-                                                              padding:
-                                                                  EdgeInsets
-                                                                      .all(24),
-                                                              child: Text(
-                                                                  'Sin imagen'),
-                                                            ),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              );
-                                            }
-                                          : null,
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
+                    /// FILTROS
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        SizedBox(
+                          width: 260,
+                          child: DropdownButtonFormField<String>(
+                            value: filtroComercialId,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Comercial',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: [
+                              const DropdownMenuItem(
+                                  value: null,
+                                  child: Text('Todos los comerciales')),
+                              ...comercialesMap.entries
+                                  .map((entry) => DropdownMenuItem(
+                                        value: entry.key,
+                                        child: Text(entry.value),
+                                      )),
+                            ],
+                            onChanged: _onFiltroComercialChanged,
                           ),
+                        ),
+                        SizedBox(
+                          width: 300,
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.calendar_today),
+                            label: Text(
+                              (fechaInicio != null && fechaFin != null)
+                                  ? 'Del ${DateFormat('yyyy-MM-dd').format(fechaInicio!)} al ${DateFormat('yyyy-MM-dd').format(fechaFin!)}'
+                                  : 'Filtrar por rango de fechas',
+                            ),
+                            onPressed: () => _seleccionarRangoFechas(context),
+                          ),
+                        ),
+                        if (fechaInicio != null && fechaFin != null)
+                          IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () async {
+                              setState(() {
+                                fechaInicio = null;
+                                fechaFin = null;
+                              });
+                              await _loadTickets(reset: true);
+                            },
+                            tooltip: 'Limpiar rango',
+                          ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    /// BOTONES DE EXPORTACIÓN
+                    Wrap(
+                      spacing: 12,
+                      children: [
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.picture_as_pdf),
+                          label: const Text('Exportar todo a PDF'),
+                          onPressed: () async {
+                            final snapshot = await FirebaseFirestore.instance
+                                .collection('tickets')
+                                .get();
+                            if (snapshot.docs.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text(
+                                          'No hay tickets para exportar')));
+                              return;
+                            }
+                            await _exportarPDFTodos(snapshot.docs);
+                          },
+                        ),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.table_chart),
+                          label: const Text('Exportar todo a Excel'),
+                          onPressed:
+                              tickets.isEmpty ? null : _exportarExcelTodos,
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    /// LISTA DE TICKETS
+                    Expanded(
+                      child: tickets.isEmpty && isLoading
+                          ? const Center(child: CircularProgressIndicator())
+                          : tickets.isEmpty
+                              ? const Center(
+                                  child: Text('No hay tickets subidos.'))
+                              : ListView.separated(
+                                  itemCount: tickets.length + (hasMore ? 1 : 0),
+                                  separatorBuilder: (_, __) => const Divider(),
+                                  itemBuilder: (context, index) {
+                                    if (index == tickets.length) {
+                                      return Center(
+                                        child: TextButton.icon(
+                                          icon: const Icon(Icons.expand_more),
+                                          label: const Text('Cargar más'),
+                                          onPressed: isLoading
+                                              ? null
+                                              : () => _loadTickets(),
+                                        ),
+                                      );
+                                    }
+                                    final ticket = tickets[index];
+                                    final data = ticket.data();
+                                    final comercialName =
+                                        comercialesMap[data['comercialId']] ??
+                                            'Desconocido';
+
+                                    return ListTile(
+                                      leading: const Icon(
+                                          Icons.receipt_outlined,
+                                          size: 36,
+                                          color: Colors.blueGrey),
+                                      title: Text(
+                                        '${data['tipoDoc'] ?? ''} - ${data['tipo']}',
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w600),
+                                      ),
+                                      subtitle: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text('Comercial: $comercialName'),
+                                          Text(
+                                              'Fecha: ${DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate())}'),
+                                          if (data['establecimiento'] != null)
+                                            Text(
+                                                'Establecimiento: ${data['establecimiento']}'),
+                                          if (data['totalEuros'] != null)
+                                            Text(
+                                              'Total: €${data['totalEuros']}',
+                                              style: const TextStyle(
+                                                  fontWeight: FontWeight.bold),
+                                            ),
+                                        ],
+                                      ),
+                                      trailing: Wrap(
+                                        spacing: 8,
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(
+                                                Icons.picture_as_pdf),
+                                            tooltip:
+                                                'Exportar este ticket a PDF',
+                                            onPressed: () =>
+                                                _exportarPDFTicket(ticket),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(Icons.visibility),
+                                            tooltip: 'Ver imagen',
+                                            onPressed: (data['fotoFactura'] !=
+                                                        null ||
+                                                    data['fotoCopia'] != null)
+                                                ? () => _verImagenDialog(data)
+                                                : null,
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
+                    ),
+                  ],
+                ),
               ),
-            ],
+            ),
           ),
         ),
       ),

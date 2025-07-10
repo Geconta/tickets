@@ -31,25 +31,61 @@ class _RegisterPageState extends State<RegisterPage> {
         password: password,
       );
 
-      // Guardar información adicional en Firestore
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userCredential.user!.uid)
-          .set({
-        'uid': userCredential.user!.uid,
+      final user = userCredential.user;
+
+      // Guardar en Firestore
+      await FirebaseFirestore.instance.collection('users').doc(user!.uid).set({
+        'uid': user.uid,
         'email': email,
         'name': name,
         'lastName': lastName,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, '/comercial');
-      }
+      // ✅ Enviar verificación de correo
+      await user.sendEmailVerification();
+
+      // ✅ Mostrar diálogo y NO redirigir a la app directamente
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Verifica tu correo'),
+          content: const Text('Te hemos enviado un enlace de verificación.'),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await user.reload(); // Actualiza los datos del usuario
+                final refreshedUser = FirebaseAuth.instance.currentUser;
+                if (refreshedUser != null && refreshedUser.emailVerified) {
+                  if (mounted) {
+                    Navigator.pop(context); // Cierra el diálogo
+                    Navigator.pushReplacementNamed(
+                        context, '/comercial'); // Va a comercial
+                  }
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                        content: Text('Aún no has verificado el correo')),
+                  );
+                }
+              },
+              child: const Text('Ya verifiqué'),
+            ),
+            TextButton(
+              onPressed: () {
+                FirebaseAuth.instance.signOut(); // Cierra sesión
+                Navigator.popUntil(
+                    context, ModalRoute.withName('/login')); // Regresa a login
+              },
+              child: const Text('Cancelar'),
+            ),
+          ],
+        ),
+      );
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString()}')),
+      );
     } finally {
       if (mounted) setState(() => isLoading = false);
     }

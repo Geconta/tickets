@@ -501,8 +501,355 @@ class _ComercialPageState extends State<ComercialPage> {
     };
   }
 
+  Widget _buildListadoTickets() {
+    return SizedBox(
+      height: 400,
+      child: StreamBuilder(
+        stream: FirebaseFirestore.instance
+            .collection('tickets')
+            .where('comercialId',
+                isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+            .orderBy('fechaHora', descending: true)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          var tickets = snapshot.data!.docs;
+
+          // Filtro por tipo
+          if ((filtroTipoTicket ?? '').isNotEmpty) {
+            tickets =
+                tickets.where((d) => d['tipo'] == filtroTipoTicket).toList();
+          }
+
+          // Filtro por fecha
+          if (selectedDate != null) {
+            tickets = tickets.where((d) {
+              final fecha = d['fechaHora'].toDate();
+              return fecha.year == selectedDate!.year &&
+                  fecha.month == selectedDate!.month &&
+                  fecha.day == selectedDate!.day;
+            }).toList();
+          }
+
+          if (tickets.isEmpty) {
+            return const Center(child: Text('Sin historial.'));
+          }
+
+          return Column(
+            children: [
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () => _exportarPDF(tickets),
+                  icon: const Icon(Icons.picture_as_pdf),
+                  label: const Text('Exportar todo'),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: ListView.separated(
+                  itemCount: tickets.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (context, index) {
+                    final data = tickets[index].data();
+                    return Card(
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      child: ListTile(
+                        title: Text('${data['tipo']}'),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                                'Fecha: ${DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate())}'),
+                            if (data['establecimiento'] != null)
+                              Text(
+                                  'Establecimiento: ${data['establecimiento']}'),
+                            if (data['totalEuros'] != null)
+                              Text('Total: €${data['totalEuros']}',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.visibility),
+                              tooltip: 'Ver imágenes',
+                              onPressed: () {
+                                showDialog(
+                                  context: context,
+                                  builder: (_) => Dialog(
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (data['fotoFactura'] != null)
+                                          Flexible(
+                                            child: Image.network(
+                                              data['fotoFactura'],
+                                              fit: BoxFit.contain,
+                                            ),
+                                          ),
+                                        if (data['fotoCopia'] != null)
+                                          Flexible(
+                                            child: Image.network(
+                                              data['fotoCopia'],
+                                              fit: BoxFit.contain,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.picture_as_pdf),
+                              tooltip: 'Exportar PDF',
+                              onPressed: () => _exportarPDFTicket(data),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              tooltip: 'Eliminar',
+                              onPressed: () async {
+                                final confirm = await showDialog<bool>(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: const Text('¿Eliminar ticket?'),
+                                    content: const Text(
+                                        '¿Deseas eliminar este ticket?'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(context, false),
+                                        child: const Text('Cancelar'),
+                                      ),
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(context, true),
+                                        child: const Text('Eliminar',
+                                            style:
+                                                TextStyle(color: Colors.red)),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirm == true) {
+                                  await _eliminarTicket(
+                                    tickets[index].id,
+                                    data['fotoFactura'],
+                                    data['fotoCopia'],
+                                  );
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildFormularioNuevoTicket(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 24),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DropdownButtonFormField<String>(
+              value: tipoTicketNuevo,
+              items: tipos
+                  .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                  .toList(),
+              onChanged: (v) => setState(() => tipoTicketNuevo = v),
+              decoration: const InputDecoration(
+                labelText: 'Tipo de ticket',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    icon: Icon(
+                      Icons.camera_alt,
+                      color: imagenFactura == null ? Colors.grey : Colors.blue,
+                    ),
+                    label: Text(imagenFactura == null
+                        ? 'Subir Factura simplificada'
+                        : 'Factura lista'),
+                    onPressed: () async {
+                      final picker = ImagePicker();
+                      final picked = await picker.pickImage(
+                          source: ImageSource.camera, imageQuality: 70);
+                      if (picked != null) {
+                        setState(() => imagenFactura = picked);
+
+                        setState(() => isUploading = true);
+                        try {
+                          final textoFactura =
+                              await extraerTextoFacturaWeb(imagenFactura!)
+                                  .timeout(
+                            const Duration(seconds: 15),
+                            onTimeout: () => null,
+                          );
+                          String? total;
+                          String? establecimiento;
+                          if (textoFactura != null) {
+                            final datos = extraerDatosFactura(textoFactura);
+                            establecimiento = datos['establecimiento'];
+                            total = datos['total'];
+                          }
+                          setState(() {
+                            textoFacturaExtraido = textoFactura;
+                            totalExtraido = total;
+                            establecimientoExtraido = establecimiento;
+                            totalController.text = total ?? '';
+                          });
+                        } finally {
+                          setState(() => isUploading = false);
+                        }
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    icon: Icon(
+                      Icons.camera_alt_outlined,
+                      color: imagenCopia == null ? Colors.grey : Colors.blue,
+                    ),
+                    label: Text(imagenCopia == null
+                        ? 'Subir Copia cliente'
+                        : 'Copia lista'),
+                    onPressed: () async {
+                      final picker = ImagePicker();
+                      final picked = await picker.pickImage(
+                          source: ImageSource.camera, imageQuality: 70);
+                      if (picked != null) {
+                        setState(() => imagenCopia = picked);
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: totalController,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Total (€)',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) {
+                setState(() {
+                  totalExtraido = value;
+                });
+              },
+            ),
+            const SizedBox(height: 10),
+            ElevatedButton(
+              onPressed: (tipoTicketNuevo != null &&
+                      imagenFactura != null &&
+                      imagenCopia != null &&
+                      !isUploading)
+                  ? () async {
+                      setState(() => isUploading = true);
+                      try {
+                        final user = FirebaseAuth.instance.currentUser;
+                        if (user == null) return;
+                        final supabase = Supabase.instance.client;
+                        final fileNameFactura =
+                            '${user.uid}_${DateTime.now().millisecondsSinceEpoch}_factura.jpg';
+                        final fileNameCopia =
+                            '${user.uid}_${DateTime.now().millisecondsSinceEpoch}_copia.jpg';
+                        final urlFactura = await supabase.storage
+                            .from('ticketsfotos')
+                            .uploadBinary(
+                              fileNameFactura,
+                              await imagenFactura!.readAsBytes(),
+                              fileOptions: const FileOptions(upsert: true),
+                            );
+                        final urlCopia = await supabase.storage
+                            .from('ticketsfotos')
+                            .uploadBinary(
+                              fileNameCopia,
+                              await imagenCopia!.readAsBytes(),
+                              fileOptions: const FileOptions(upsert: true),
+                            );
+
+                        await FirebaseFirestore.instance
+                            .collection('tickets')
+                            .add({
+                          'comercialId': user.uid,
+                          'tipo': tipoTicketNuevo,
+                          'fechaHora': DateTime.now(),
+                          'fotoFactura': supabase.storage
+                              .from('ticketsfotos')
+                              .getPublicUrl(fileNameFactura),
+                          'fotoCopia': supabase.storage
+                              .from('ticketsfotos')
+                              .getPublicUrl(fileNameCopia),
+                          'textoFactura': textoFacturaExtraido,
+                          'totalEuros': double.tryParse(
+                              totalController.text.replaceAll(',', '.')),
+                          'establecimiento': establecimientoExtraido,
+                        });
+
+                        setState(() {
+                          tipoTicketNuevo = null;
+                          imagenFactura = null;
+                          imagenCopia = null;
+                          textoFacturaExtraido = null;
+                          totalExtraido = null;
+                          establecimientoExtraido = null;
+                          totalController.clear();
+                        });
+
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Registro creado')));
+                      } catch (e) {
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text('Error: $e')));
+                      } finally {
+                        setState(() => isUploading = false);
+                      }
+                    }
+                  : null,
+              child: isUploading
+                  ? const CircularProgressIndicator()
+                  : const Text('Crear nuevo registro'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return FutureBuilder<Map<String, String>>(
       future: _getUserInfo(),
       builder: (context, snapshot) {
@@ -514,13 +861,14 @@ class _ComercialPageState extends State<ComercialPage> {
         final lastName = snapshot.data!['lastName']!;
 
         return Scaffold(
-          backgroundColor: const Color(0xFFF5F6FA),
+          backgroundColor: colorScheme.surfaceVariant.withOpacity(0.05),
           appBar: AppBar(
             backgroundColor: Colors.white,
             elevation: 1,
             title: Text(
               'Comercial: ${name.isNotEmpty ? '$name $lastName' : 'Sin nombre'}',
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              style:
+                  textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             actions: [
               IconButton(
@@ -532,504 +880,103 @@ class _ComercialPageState extends State<ComercialPage> {
                 },
               ),
             ],
-            iconTheme: const IconThemeData(color: Colors.black54),
           ),
           body: Center(
             child: SingleChildScrollView(
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 24),
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.grey.withOpacity(0.10),
-                      blurRadius: 18,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Título principal
-                    Text(
-                      'Nuevo ticket',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 10),
+              padding: const EdgeInsets.all(16),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 800),
+                child: Card(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
+                  elevation: 6,
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text('Nuevo ticket',
+                            style: textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 16),
 
-                    // NUEVO: Formulario de agregar registro (justo debajo del título)
-                    Card(
-                      margin: const EdgeInsets.only(bottom: 24),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        /// Formulario para nuevo ticket
+                        _buildFormularioNuevoTicket(context),
+
+                        if (isLoading)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 16),
+                            child: Center(child: CircularProgressIndicator()),
+                          ),
+
+                        const Divider(height: 40),
+
+                        /// Filtros
+                        Text('Filtros',
+                            style: textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 12),
+
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
                           children: [
-                            DropdownButtonFormField<String>(
-                              value: tipoTicketNuevo,
-                              items: tipos
-                                  .map((t) => DropdownMenuItem(
-                                      value: t, child: Text(t)))
-                                  .toList(),
-                              onChanged: (v) =>
-                                  setState(() => tipoTicketNuevo = v),
-                              decoration: const InputDecoration(
-                                  labelText: 'Tipo de ticket',
-                                  border: OutlineInputBorder()),
-                            ),
-                            const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    icon: Icon(
-                                      Icons.camera_alt,
-                                      color: imagenFactura == null
-                                          ? Colors.grey
-                                          : Colors.blue,
-                                    ),
-                                    label: Text(imagenFactura == null
-                                        ? 'Subir Factura simplificada'
-                                        : 'Factura lista'),
-                                    onPressed: () async {
-                                      final picker = ImagePicker();
-                                      final picked = await picker.pickImage(
-                                          source: ImageSource.camera,
-                                          imageQuality: 70);
-                                      if (picked != null) {
-                                        setState(() => imagenFactura = picked);
-
-                                        // Extraer texto de la imagen
-                                        setState(() => isUploading = true);
-                                        try {
-                                          final textoFactura =
-                                              await extraerTextoFacturaWeb(
-                                                      imagenFactura!)
-                                                  .timeout(
-                                            const Duration(seconds: 15),
-                                            onTimeout: () => null,
-                                          );
-                                          String? total;
-                                          String? establecimiento;
-                                          if (textoFactura != null) {
-                                            final datos = extraerDatosFactura(
-                                                textoFactura);
-                                            establecimiento =
-                                                datos['establecimiento'];
-                                            total = datos['total'];
-                                          }
-                                          setState(() {
-                                            textoFacturaExtraido = textoFactura;
-                                            totalExtraido = total;
-                                            establecimientoExtraido =
-                                                establecimiento;
-                                            totalController.text = total ?? '';
-                                          });
-                                        } finally {
-                                          setState(() => isUploading = false);
-                                        }
-                                      }
-                                    },
-                                  ),
+                            SizedBox(
+                              width: 260,
+                              child: DropdownButtonFormField<String>(
+                                value: filtroTipoTicket ?? '',
+                                items: [
+                                  const DropdownMenuItem(
+                                      value: '',
+                                      child: Text('Todos los tipos')),
+                                  ...tipos.map((t) => DropdownMenuItem(
+                                      value: t, child: Text(t))),
+                                ],
+                                onChanged: (v) =>
+                                    setState(() => filtroTipoTicket = v ?? ''),
+                                decoration: const InputDecoration(
+                                  labelText: 'Tipo',
+                                  border: OutlineInputBorder(),
                                 ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    icon: Icon(
-                                      Icons.camera_alt_outlined,
-                                      color: imagenCopia == null
-                                          ? Colors.grey
-                                          : Colors.blue,
-                                    ),
-                                    label: Text(imagenCopia == null
-                                        ? 'Subir Copia cliente'
-                                        : 'Copia lista'),
-                                    onPressed: () async {
-                                      final picker = ImagePicker();
-                                      final picked = await picker.pickImage(
-                                          source: ImageSource.camera,
-                                          imageQuality: 70);
-                                      if (picked != null) {
-                                        setState(() => imagenCopia = picked);
-                                      }
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            TextFormField(
-                              controller: totalController,
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                      decimal: true),
-                              decoration: const InputDecoration(
-                                labelText: 'Total (€)',
-                                border: OutlineInputBorder(),
                               ),
-                              onChanged: (value) {
-                                setState(() {
-                                  totalExtraido = value;
-                                });
-                              },
                             ),
-                            const SizedBox(height: 10),
-                            ElevatedButton(
-                              onPressed: (tipoTicketNuevo != null &&
-                                      imagenFactura != null &&
-                                      imagenCopia != null &&
-                                      !isUploading)
-                                  ? () async {
-                                      setState(() => isUploading = true);
-                                      try {
-                                        final user =
-                                            FirebaseAuth.instance.currentUser;
-                                        if (user == null) return;
-                                        final supabase =
-                                            Supabase.instance.client;
-                                        final fileNameFactura =
-                                            '${user.uid}_${DateTime.now().millisecondsSinceEpoch}_factura.jpg';
-                                        final fileNameCopia =
-                                            '${user.uid}_${DateTime.now().millisecondsSinceEpoch}_copia.jpg';
-                                        final urlFactura = await supabase
-                                            .storage
-                                            .from('ticketsfotos')
-                                            .uploadBinary(
-                                                fileNameFactura,
-                                                await imagenFactura!
-                                                    .readAsBytes(),
-                                                fileOptions: const FileOptions(
-                                                    upsert: true));
-                                        final urlCopia = await supabase.storage
-                                            .from('ticketsfotos')
-                                            .uploadBinary(
-                                                fileNameCopia,
-                                                await imagenCopia!
-                                                    .readAsBytes(),
-                                                fileOptions: const FileOptions(
-                                                    upsert: true));
-
-                                        await FirebaseFirestore.instance
-                                            .collection('tickets')
-                                            .add({
-                                          'comercialId': user.uid,
-                                          'tipo': tipoTicketNuevo,
-                                          'fechaHora': DateTime.now(),
-                                          'fotoFactura': supabase.storage
-                                              .from('ticketsfotos')
-                                              .getPublicUrl(fileNameFactura),
-                                          'fotoCopia': supabase.storage
-                                              .from('ticketsfotos')
-                                              .getPublicUrl(fileNameCopia),
-                                          'textoFactura': textoFacturaExtraido,
-                                          'totalEuros': double.tryParse(
-                                              totalController.text
-                                                  .replaceAll(',', '.')),
-                                          'establecimiento':
-                                              establecimientoExtraido,
-                                          'totalEuros': double.tryParse(
-                                              totalExtraido ?? ''),
-                                        });
-                                        setState(() {
-                                          tipoTicketNuevo = null;
-                                          imagenFactura = null;
-                                          imagenCopia = null;
-                                          textoFacturaExtraido = null;
-                                          totalExtraido = null;
-                                          establecimientoExtraido = null;
-                                          totalController.clear();
-                                        });
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(const SnackBar(
-                                                content:
-                                                    Text('Registro creado')));
-                                      } catch (e) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(SnackBar(
-                                                content: Text('Error: $e')));
-                                      } finally {
-                                        setState(() => isUploading = false);
-                                      }
-                                    }
-                                  : null,
-                              child: isUploading
-                                  ? const CircularProgressIndicator()
-                                  : const Text('Crear nuevo registro'),
+                            if (filtroTipoTicket != null &&
+                                filtroTipoTicket!.isNotEmpty)
+                              IconButton(
+                                icon: const Icon(Icons.clear),
+                                tooltip: 'Quitar filtro',
+                                onPressed: () =>
+                                    setState(() => filtroTipoTicket = null),
+                              ),
+                            OutlinedButton.icon(
+                              icon: const Icon(Icons.calendar_today),
+                              label: Text(selectedDate == null
+                                  ? 'Filtrar por fecha'
+                                  : DateFormat('yyyy-MM-dd')
+                                      .format(selectedDate!)),
+                              onPressed: _selectDate,
                             ),
+                            if (selectedDate != null)
+                              IconButton(
+                                icon: const Icon(Icons.clear),
+                                tooltip: 'Limpiar fecha',
+                                onPressed: _clearDateFilter,
+                              ),
                           ],
                         ),
-                      ),
-                    ),
 
-                    if (isLoading)
-                      const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Center(child: CircularProgressIndicator()),
-                      ),
-                    const Divider(height: 32),
+                        const SizedBox(height: 24),
 
-                    // Filtros
-                    Text(
-                      'Filtros',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        // Filtro por tipo
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            value: filtroTipoTicket ?? '',
-                            items: [
-                              const DropdownMenuItem(
-                                value: '',
-                                child: Text('Todos los tipos'),
-                              ),
-                              ...tipos.map((t) => DropdownMenuItem(
-                                    value: t,
-                                    child: Text(t),
-                                  )),
-                            ],
-                            onChanged: (v) =>
-                                setState(() => filtroTipoTicket = v ?? ''),
-                            decoration: const InputDecoration(
-                              labelText: 'Tipo',
-                              border: OutlineInputBorder(),
-                            ),
-                          ),
-                        ),
-                        if (filtroTipoTicket != null)
-                          IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () =>
-                                setState(() => filtroTipoTicket = null),
-                            tooltip: 'Quitar filtro',
-                          ),
-                        const SizedBox(width: 10),
-                        // Filtro por fecha
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _selectDate,
-                            icon: const Icon(Icons.calendar_today),
-                            label: Text(selectedDate == null
-                                ? 'Filtrar por fecha'
-                                : DateFormat('yyyy-MM-dd')
-                                    .format(selectedDate!)),
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 18, horizontal: 12),
-                            ),
-                          ),
-                        ),
-                        if (selectedDate != null)
-                          IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: _clearDateFilter,
-                            tooltip: 'Limpiar fecha',
-                          ),
+                        /// Listado de tickets
+                        Text('Tus tickets subidos:',
+                            style: textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 10),
+
+                        _buildListadoTickets(),
                       ],
                     ),
-                    const SizedBox(height: 16),
-                    // Listado de tickets
-                    Text(
-                      'Tus tickets subidos:',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      height: 400,
-                      child: StreamBuilder(
-                        stream: FirebaseFirestore.instance
-                            .collection('tickets')
-                            .where('comercialId',
-                                isEqualTo:
-                                    FirebaseAuth.instance.currentUser?.uid)
-                            .orderBy('fechaHora', descending: true)
-                            .snapshots(),
-                        builder: (context, snapshot) {
-                          if (!snapshot.hasData) {
-                            return const Center(
-                                child: CircularProgressIndicator());
-                          }
-
-                          var tickets = snapshot.data!.docs;
-
-                          // Filtro por tipo
-                          if ((filtroTipoTicket ?? '').isNotEmpty) {
-                            tickets = tickets
-                                .where((d) => d['tipo'] == filtroTipoTicket)
-                                .toList();
-                          }
-
-                          // Filtro por fecha
-                          if (selectedDate != null) {
-                            tickets = tickets.where((d) {
-                              final fecha = d['fechaHora'].toDate();
-                              return fecha.year == selectedDate!.year &&
-                                  fecha.month == selectedDate!.month &&
-                                  fecha.day == selectedDate!.day;
-                            }).toList();
-                          }
-
-                          if (tickets.isEmpty) {
-                            return const Center(child: Text('Sin historial.'));
-                          }
-
-                          return Column(
-                            children: [
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: TextButton.icon(
-                                  onPressed: tickets.isNotEmpty
-                                      ? () => _exportarPDF(tickets)
-                                      : null,
-                                  icon: const Icon(Icons.picture_as_pdf),
-                                  label: const Text('Exportar todo'),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Expanded(
-                                child: ListView.separated(
-                                  itemCount: tickets.length,
-                                  separatorBuilder: (_, __) =>
-                                      const SizedBox(height: 10),
-                                  itemBuilder: (context, index) {
-                                    final data = tickets[index].data();
-                                    return Card(
-                                      elevation: 2,
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(12)),
-                                      child: ListTile(
-                                        title: Text('${data['tipo']}'),
-                                        subtitle: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                                'Fecha: ${DateFormat('yyyy-MM-dd HH:mm').format(data['fechaHora'].toDate())}'),
-                                            if (data['establecimiento'] != null)
-                                              Text(
-                                                  'Establecimiento: ${data['establecimiento']}'),
-                                            if (data['totalEuros'] != null)
-                                              Text(
-                                                  'Total: €${data['totalEuros']}',
-                                                  style: const TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.bold)),
-                                          ],
-                                        ),
-                                        trailing: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            IconButton(
-                                              icon:
-                                                  const Icon(Icons.visibility),
-                                              tooltip: 'Ver imágenes',
-                                              onPressed: () {
-                                                showDialog(
-                                                  context: context,
-                                                  builder: (_) => Dialog(
-                                                    child: Row(
-                                                      mainAxisSize:
-                                                          MainAxisSize.min,
-                                                      children: [
-                                                        if (data[
-                                                                'fotoFactura'] !=
-                                                            null)
-                                                          Flexible(
-                                                            child:
-                                                                Image.network(
-                                                              data[
-                                                                  'fotoFactura'],
-                                                              fit: BoxFit
-                                                                  .contain,
-                                                            ),
-                                                          ),
-                                                        if (data['fotoCopia'] !=
-                                                            null)
-                                                          Flexible(
-                                                            child:
-                                                                Image.network(
-                                                              data['fotoCopia'],
-                                                              fit: BoxFit
-                                                                  .contain,
-                                                            ),
-                                                          ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                );
-                                              },
-                                            ),
-                                            IconButton(
-                                              icon: const Icon(
-                                                  Icons.picture_as_pdf),
-                                              tooltip: 'Exportar PDF',
-                                              onPressed: () =>
-                                                  _exportarPDFTicket(data),
-                                            ),
-                                            IconButton(
-                                              icon: const Icon(Icons.delete,
-                                                  color: Colors.red),
-                                              tooltip: 'Eliminar',
-                                              onPressed: () async {
-                                                final confirm =
-                                                    await showDialog<bool>(
-                                                  context: context,
-                                                  builder: (context) =>
-                                                      AlertDialog(
-                                                    title: const Text(
-                                                        '¿Eliminar ticket?'),
-                                                    content: const Text(
-                                                        '¿Estás seguro de que deseas eliminar este ticket?'),
-                                                    actions: [
-                                                      TextButton(
-                                                        onPressed: () =>
-                                                            Navigator.pop(
-                                                                context, false),
-                                                        child: const Text(
-                                                            'Cancelar'),
-                                                      ),
-                                                      TextButton(
-                                                        onPressed: () =>
-                                                            Navigator.pop(
-                                                                context, true),
-                                                        child: const Text(
-                                                            'Eliminar',
-                                                            style: TextStyle(
-                                                                color: Colors
-                                                                    .red)),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                );
-                                                if (confirm == true) {
-                                                  await _eliminarTicket(
-                                                    tickets[index].id,
-                                                    data['fotoFactura'],
-                                                    data['fotoCopia'],
-                                                  );
-                                                }
-                                              },
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                  ],
+                  ),
                 ),
               ),
             ),
