@@ -107,8 +107,7 @@ class _LoginPageState extends State<LoginPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Image.asset('assets/images/geconta.jpg', height: 64),
-                    const SizedBox(height: 24),
+                    Image.asset('assets/images/geconta.png', height: 170),
                     Text(
                       'Bienvenido de nuevo',
                       style: textTheme.headlineSmall
