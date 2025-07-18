@@ -645,7 +645,7 @@ class _AdminPageState extends State<AdminPage> {
     final textTheme = Theme.of(context).textTheme;
 
     return Scaffold(
-      backgroundColor: colorScheme.surfaceVariant.withOpacity(0.1),
+      backgroundColor: colorScheme.surfaceContainerHighest.withOpacity(0.1),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 1,

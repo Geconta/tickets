@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -24,6 +25,7 @@ class _ComercialPageState extends State<ComercialPage> {
   String? tipoTicket;
   String? filtroTipoTicket;
   DateTime? selectedDate;
+  DateTime? fechaTicketManual;
   bool isLoading = false;
   String? tipoTicketNuevo;
   XFile? imagenFactura;
@@ -41,7 +43,10 @@ class _ComercialPageState extends State<ComercialPage> {
   String? totalExtraido;
   String? establecimientoExtraido;
 
+  String? Obsservaciones;
+
   final TextEditingController totalController = TextEditingController();
+  final TextEditingController observacionesController = TextEditingController();
 
   Future<void> _eliminarTicket(
       String ticketId, String? fotoFacturaUrl, String? fotoCopiaUrl) async {
@@ -94,13 +99,49 @@ class _ComercialPageState extends State<ComercialPage> {
     return url;
   }
 
+  Future<XFile?> _seleccionarImagen(BuildContext context) async {
+    return showModalBottomSheet<XFile>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Tomar foto'),
+              onTap: () async {
+                final picker = ImagePicker();
+                final picked = await picker.pickImage(
+                  source: ImageSource.camera,
+                  imageQuality: 80,
+                );
+                Navigator.pop(context, picked);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo),
+              title: const Text('Seleccionar de galería'),
+              onTap: () async {
+                final picker = ImagePicker();
+                final picked = await picker.pickImage(
+                  source: ImageSource.gallery,
+                  imageQuality: 80,
+                );
+                Navigator.pop(context, picked);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _tomarFotoYSubir(String tipoDoc) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || tipoTicket == null) return;
 
-    final picker = ImagePicker();
-    final picked =
-        await picker.pickImage(source: ImageSource.camera, imageQuality: 80);
+    final picked = await _seleccionarImagen(context);
+
     if (picked == null) return;
 
     double? totalEuros;
@@ -361,6 +402,8 @@ class _ComercialPageState extends State<ComercialPage> {
                 pw.Text('Establecimiento: ${data['establecimiento']}'),
               if (data['totalEuros'] != null)
                 pw.Text('Total: €${data['totalEuros']}'),
+              if (data['observaciones'] != null)
+                pw.Text('Observaciones: ${data['observaciones']}'),
               if (imageFactura != null)
                 pw.Padding(
                   padding: const pw.EdgeInsets.symmetric(vertical: 10),
@@ -573,6 +616,10 @@ class _ComercialPageState extends State<ComercialPage> {
                               Text('Total: €${data['totalEuros']}',
                                   style: const TextStyle(
                                       fontWeight: FontWeight.bold)),
+                            if (data['observaciones'] != null)
+                              Text('Observaciones: ${data['observaciones']}',
+                                  style: const TextStyle(
+                                      fontStyle: FontStyle.italic)),
                           ],
                         ),
                         trailing: Row(
@@ -756,7 +803,7 @@ class _ComercialPageState extends State<ComercialPage> {
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
-                labelText: 'Total (€)',
+                labelText: 'Total (€) (Opcional)',
                 border: OutlineInputBorder(),
               ),
               onChanged: (value) {
@@ -764,6 +811,45 @@ class _ComercialPageState extends State<ComercialPage> {
                   totalExtraido = value;
                 });
               },
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.date_range),
+                    label: Text(fechaTicketManual == null
+                        ? 'Seleccionar fecha del ticket (Opcional)'
+                        : 'Fecha: ${DateFormat('yyyy-MM-dd').format(fechaTicketManual!)}'),
+                    onPressed: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.now(),
+                        firstDate: DateTime(2023),
+                        lastDate: DateTime.now(),
+                      );
+                      if (picked != null) {
+                        setState(() => fechaTicketManual = picked);
+                      }
+                    },
+                  ),
+                ),
+                if (fechaTicketManual != null)
+                  IconButton(
+                    icon: const Icon(Icons.clear),
+                    tooltip: 'Borrar fecha',
+                    onPressed: () => setState(() => fechaTicketManual = null),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: observacionesController,
+              keyboardType: TextInputType.text,
+              decoration: const InputDecoration(
+                labelText: 'Observaciones (Opcional)',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 10),
             ElevatedButton(
@@ -818,7 +904,16 @@ class _ComercialPageState extends State<ComercialPage> {
                             .add({
                           'comercialId': user.uid,
                           'tipo': tipoTicketNuevo,
-                          'fechaHora': DateTime.now(),
+                          'fechaHora': fechaTicketManual != null
+                              ? DateTime(
+                                  fechaTicketManual!.year,
+                                  fechaTicketManual!.month,
+                                  fechaTicketManual!.day,
+                                  DateTime.now().hour,
+                                  DateTime.now().minute,
+                                  DateTime.now().second,
+                                )
+                              : DateTime.now(),
                           'fotoFactura': supabase.storage
                               .from('ticketsfotos')
                               .getPublicUrl(fileNameFactura),
@@ -829,6 +924,7 @@ class _ComercialPageState extends State<ComercialPage> {
                           'totalEuros': double.tryParse(
                               totalController.text.replaceAll(',', '.')),
                           'establecimiento': establecimientoExtraido,
+                          'observaciones': observacionesController.text.trim(),
                         });
 
                         setState(() {
@@ -839,6 +935,8 @@ class _ComercialPageState extends State<ComercialPage> {
                           totalExtraido = null;
                           establecimientoExtraido = null;
                           totalController.clear();
+                          fechaTicketManual = null;
+                          observacionesController.clear();
                         });
 
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -878,7 +976,8 @@ class _ComercialPageState extends State<ComercialPage> {
         final lastName = snapshot.data!['lastName']!;
 
         return Scaffold(
-          backgroundColor: colorScheme.surfaceVariant.withOpacity(0.05),
+          backgroundColor:
+              colorScheme.surfaceContainerHighest.withOpacity(0.05),
           appBar: AppBar(
             backgroundColor: Colors.white,
             elevation: 1,
