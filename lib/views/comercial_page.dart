@@ -741,12 +741,9 @@ class _ComercialPageState extends State<ComercialPage> {
                         ? 'Subir Factura simplificada'
                         : 'Factura lista'),
                     onPressed: () async {
-                      final picker = ImagePicker();
-                      final picked = await picker.pickImage(
-                          source: ImageSource.camera, imageQuality: 70);
+                      final picked = await _seleccionarImagen(context);
                       if (picked != null) {
                         setState(() => imagenFactura = picked);
-
                         setState(() => isUploading = true);
                         try {
                           final textoFactura =
@@ -786,9 +783,7 @@ class _ComercialPageState extends State<ComercialPage> {
                         ? 'Subir Copia cliente'
                         : 'Copia lista'),
                     onPressed: () async {
-                      final picker = ImagePicker();
-                      final picked = await picker.pickImage(
-                          source: ImageSource.camera, imageQuality: 70);
+                      final picked = await _seleccionarImagen(context);
                       if (picked != null) {
                         setState(() => imagenCopia = picked);
                       }
