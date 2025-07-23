@@ -3,7 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
-import 'package:tickets_app/views/admin/admin_filters.dart ';
+import 'package:tickets_app/views/admin/admin_filters.dart';
 import 'package:tickets_app/views/admin/admin_ticket_list.dart';
 import 'package:tickets_app/services/admin_export_service.dart';
 
