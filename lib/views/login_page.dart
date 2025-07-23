@@ -90,7 +90,7 @@ class _LoginPageState extends State<LoginPage> {
     final textTheme = Theme.of(context).textTheme;
 
     return Scaffold(
-      backgroundColor: colorScheme.surface,
+      backgroundColor: colorScheme.background,
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),

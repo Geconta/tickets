@@ -4,8 +4,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'firebase_options.dart';
 import 'views/login_page.dart';
-import 'views/comercial_page.dart';
-import 'views/admin_page.dart';
+import 'views/comercial/comercial_page.dart';
+import 'views/admin/admin_page.dart';
 import 'views/register_page.dart';
 
 import 'package:google_fonts/google_fonts.dart';
